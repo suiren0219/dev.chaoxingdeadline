@@ -45,6 +45,18 @@ public final class SettingsActivity extends BaseActivity {
         scroll.addView(content, new ScrollView.LayoutParams(-1, -2));
         root.addView(scroll, new LinearLayout.LayoutParams(-1, 0, 1f));
 
+        // -- 改动说明 --
+        LinearLayout note = card();
+        note.setPadding(dp(16), dp(14), dp(16), dp(14));
+        note.addView(text("为什么有这个修改", 15, true, UiTheme.text(this)), new LinearLayout.LayoutParams(-1, -2));
+        TextView noteBody = text("学习通升级后，内置的深色模式入口被隐藏了。作为一个深度深色模式爱好者，"
+                + "本 fork 通过 LSPosed 把这个入口找了回来；顺手做了桌面小组件，优化查看待办的体验。—— suiren0219",
+                12, false, UiTheme.muted(this));
+        noteBody.setLineSpacing(0f, 1.25f);
+        noteBody.setPadding(0, dp(6), 0, 0);
+        note.addView(noteBody, new LinearLayout.LayoutParams(-1, -2));
+        content.addView(note, new LinearLayout.LayoutParams(-1, -2));
+
         // -- 通用 --
         content.addView(sectionHeader("通用"));
         LinearLayout group1 = card();
