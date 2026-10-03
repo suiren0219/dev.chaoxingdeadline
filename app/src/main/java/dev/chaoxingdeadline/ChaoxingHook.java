@@ -240,6 +240,26 @@ public final class ChaoxingHook extends XposedModule {
         } catch (Throwable throwable) {
             log(Log.WARN, TAG, "dark mode: WebView force-dark hook failed", throwable);
         }
+        // The host's own skin engine paints hardcoded-light views (cards,
+        // input bars) based on its night_mode preference, which defaults to
+        // false and is never written by anything. Feed it "on" so the engine
+        // uses its dark palette on those views too.
+        try {
+            Class<?> prefsImpl = Class.forName("android.app.SharedPreferencesImpl");
+            hook(prefsImpl.getDeclaredMethod("getBoolean", String.class, boolean.class))
+                    .setId("darkmode_night_mode_pref")
+                    .intercept(chain -> {
+                        Object result = chain.proceed();
+                        Object key = chain.getArg(0);
+                        if ("night_mode".equals(key) && Boolean.FALSE.equals(result)) {
+                            return Boolean.TRUE;
+                        }
+                        return result;
+                    });
+            log(Log.INFO, TAG, "dark mode: night_mode pref hook installed");
+        } catch (Throwable throwable) {
+            log(Log.WARN, TAG, "dark mode: night_mode pref hook failed", throwable);
+        }
     }
 
     private volatile Boolean darkForceCache;
