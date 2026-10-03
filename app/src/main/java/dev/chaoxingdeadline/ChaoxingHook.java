@@ -72,7 +72,7 @@ import io.github.libxposed.api.XposedModule;
 
 public final class ChaoxingHook extends XposedModule {
     private static final String TAG = "ChaoxingDeadline";
-    private static final String HOOK_VERSION = "1.3";
+    private static final String HOOK_VERSION = "1.5";
     private static final String TARGET_PACKAGE = "com.chaoxing.mobile";
     private static final String MODULE_PACKAGE = "dev.chaoxingdeadline";
     private static final long AUTO_REFRESH_MIN_GAP_MS = 3L * 60L * 1000L;
@@ -903,6 +903,13 @@ public final class ChaoxingHook extends XposedModule {
                     android.widget.Toast.makeText(activity, "重启学习通后生效", android.widget.Toast.LENGTH_SHORT).show();
                 }));
 
+        root.addView(settingsRow(activity,
+                "学习通深色设置页",
+                "打开学习通内置的深色设置页（旧版入口）",
+                "",
+                false,
+                () -> openDarkSettingActivity(activity)));
+
         TextView section = new TextView(activity);
         section.setText("弹窗范围");
         section.setTextSize(13);
@@ -1317,11 +1324,29 @@ public final class ChaoxingHook extends XposedModule {
             return false;
         }
         for (OverlayTodo old : suppressed) {
-            if (isSameOverlayTodo(old, todo)) {
+            if (isSameSuppressedOverlayTodo(old, todo)) {
                 return true;
             }
         }
         return false;
+    }
+
+    // Suppressed identities are published by OverlayBridge with the exact stored dueAt, so
+    // match exactly. The ±5-minute fuzzy matcher used here previously let one submitted
+    // item hide a different, still-pending item whose deadline sat within five minutes.
+    private boolean isSameSuppressedOverlayTodo(OverlayTodo a, OverlayTodo b) {
+        if (a == null || b == null) {
+            return false;
+        }
+        if (!safe(a.type).equals(safe(b.type))) {
+            return false;
+        }
+        String titleA = normalizeOverlayText(a.title);
+        String titleB = normalizeOverlayText(b.title);
+        if (titleA.isEmpty() || !titleA.equals(titleB)) {
+            return false;
+        }
+        return a.dueAt == b.dueAt;
     }
 
     private void addOverlayTodo(List<OverlayTodo> todos, OverlayTodo todo, long now) {
@@ -1665,9 +1690,12 @@ public final class ChaoxingHook extends XposedModule {
         if (Boolean.TRUE.equals(PARSING.get())) {
             return 0;
         }
-        collectAndFetchCourseTasks(text, ctx);
+        // Guard before collectAndFetchCourseTasks: its own JSONObject construction would
+        // re-enter this hook and re-parse the same payload otherwise. Course fetches run
+        // on executor threads with their own (fresh) ThreadLocal, so they are unaffected.
         PARSING.set(true);
         try {
+            collectAndFetchCourseTasks(text, ctx);
             List<DeadlineItem> items = DeadlineParser.parsePayload(text, ctx);
             if (items.isEmpty()) {
                 return 0;
@@ -1847,13 +1875,14 @@ public final class ChaoxingHook extends XposedModule {
                 connection.setRequestProperty("Cookie", cookie);
             }
             int code = connection.getResponseCode();
-            BufferedReader reader = new BufferedReader(new InputStreamReader(
-                    code >= 400 ? connection.getErrorStream() : connection.getInputStream(),
-                    StandardCharsets.UTF_8));
             StringBuilder builder = new StringBuilder();
-            String line;
-            while ((line = reader.readLine()) != null && builder.length() < 2_000_000) {
-                builder.append(line).append('\n');
+            try (BufferedReader reader = new BufferedReader(new InputStreamReader(
+                    code >= 400 ? connection.getErrorStream() : connection.getInputStream(),
+                    StandardCharsets.UTF_8))) {
+                String line;
+                while ((line = reader.readLine()) != null && builder.length() < 2_000_000) {
+                    builder.append(line).append('\n');
+                }
             }
             String body = builder.toString();
             log(Log.INFO, TAG, "active fetched " + code + " " + source + " len=" + body.length());

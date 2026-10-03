@@ -74,7 +74,6 @@ public final class CourseScanScores {
         }
         try {
             SharedPreferences prefs = App.getService().getRemotePreferences(PREFS);
-            DeadlineStore store = new DeadlineStore(context);
             long now = System.currentTimeMillis();
             long today = now / TimeUnit.DAYS.toMillis(1);
             SharedPreferences.Editor editor = prefs.edit();
@@ -90,14 +89,15 @@ public final class CourseScanScores {
                 boolean foundDeadline = foundDeadlines[i];
                 int score = score(prefs, key);
                 score += foundDeadline ? FINDING_BONUS : -EMPTY_PENALTY;
-                score = Math.max(NEVER_SCAN, Math.min(MAX, score));
+                // Floor at 1, never 0: only user-blocked courses (forceNeverScan) may reach
+                // NEVER_SCAN. Auto-decayed courses keep a slow probe so a host app update
+                // that changes interfaces self-heals after a module update instead of
+                // staying silent forever. Decay must never block a course either — that
+                // used to hide its already-captured deadlines from lists and widgets.
+                score = Math.max(1, Math.min(MAX, score));
                 editor.putInt("score_" + key, score).putLong("day_" + key, today);
                 if (foundDeadline) {
                     editor.putLong("active_" + key, now);
-                }
-                if (score <= NEVER_SCAN) {
-                    String name = courseNames != null && i < courseNames.length ? courseNames[i] : "";
-                    store.markCourseDisabledByScore(courseIds[i], classIds[i], name);
                 }
             }
             editor.apply();

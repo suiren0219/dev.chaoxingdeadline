@@ -73,7 +73,12 @@ public final class DeadlineParser {
         ParseContext ctx = context == null ? ParseContext.simple("") : context;
         ArrayList<DeadlineItem> result = new ArrayList<>();
         if (text != null && ctx.isActive()) {
-            result.addAll(parseHtmlList(text, ctx));
+            // parseHtmlList runs regexes with Long.parseLong on arbitrary page text; keep
+            // one malformed page from aborting the whole payload (including its JSON part).
+            try {
+                result.addAll(parseHtmlList(text, ctx));
+            } catch (Throwable ignored) {
+            }
         }
         if (!looksRelevant(text) && !sourceLooksLikeDeadline(ctx)) {
             return result;

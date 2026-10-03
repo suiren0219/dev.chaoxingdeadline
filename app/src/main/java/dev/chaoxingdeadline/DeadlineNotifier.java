@@ -26,7 +26,6 @@ public final class DeadlineNotifier {
 
     private static final long SOON_OFFSET = TimeUnit.HOURS.toMillis(3);
     private static final long URGENT_OFFSET = TimeUnit.MINUTES.toMillis(30);
-    private static final long TRIGGER_GRACE = TimeUnit.SECONDS.toMillis(15);
 
     private DeadlineNotifier() {
     }
@@ -108,19 +107,24 @@ public final class DeadlineNotifier {
             if (!canNotify(context, item, now)) {
                 continue;
             }
-            boolean caughtUp = false;
+            // offsets arrive longest-first; catch up with the *closest* missed window so a
+            // freshly captured item due in 20 minutes reports 提前 30 分钟, not 提前 24 小时.
+            long catchUpOffset = 0L;
             for (long offset : offsets) {
                 long triggerAt = item.dueAt - offset;
-                if (triggerAt <= now + TRIGGER_GRACE) {
-                    if (allowCatchUp && !caughtUp && shouldCatchUp(item, offset, now)) {
-                        notifyNow(context, item, offset, true);
-                        caughtUp = true;
+                if (triggerAt <= now) {
+                    if (allowCatchUp && shouldCatchUp(item, offset, now)
+                            && (catchUpOffset == 0L || offset < catchUpOffset)) {
+                        catchUpOffset = offset;
                     }
                     continue;
                 }
                 String key = alarmKey(item, offset);
                 scheduleAlarm(context, key, triggerAt);
                 scheduled.add(key);
+            }
+            if (catchUpOffset > 0L) {
+                notifyNow(context, item, catchUpOffset, true);
             }
         }
         prefs(context).edit().putStringSet(KEY_ALARMS, scheduled).apply();
@@ -194,9 +198,8 @@ public final class DeadlineNotifier {
         if (delta <= 0L || delta > offset) {
             return false;
         }
-        // If a long-range reminder has already been missed, send exactly one catch-up reminder,
-        // then keep the shorter future reminders scheduled. This avoids the old "blast all reminders"
-        // behavior when freshly captured items are already inside multiple reminder windows.
+        // The reminder window for this offset has started but its trigger time already
+        // passed, so it counts as missed and is eligible for exactly one catch-up send.
         return true;
     }
 
@@ -205,11 +208,17 @@ public final class DeadlineNotifier {
         if (!canNotify(context, item, now)) {
             return;
         }
+        long bestOffset = 0L;
         for (long offset : AppSettings.notifyOffsetsMillis(context)) {
-            if (item.dueAt - offset <= now + TRIGGER_GRACE && shouldCatchUp(item, offset, now)) {
-                notifyNow(context, item, offset, true);
-                return;
+            if (item.dueAt - offset > now || !shouldCatchUp(item, offset, now)) {
+                continue;
             }
+            if (bestOffset == 0L || offset < bestOffset) {
+                bestOffset = offset;
+            }
+        }
+        if (bestOffset > 0L) {
+            notifyNow(context, item, bestOffset, true);
         }
     }
 
@@ -252,7 +261,7 @@ public final class DeadlineNotifier {
         ensureChannel(context);
         PendingIntent contentIntent = openModuleIntent(context, item);
         android.app.Notification.Builder builder = new android.app.Notification.Builder(context, CHANNEL_ID)
-                .setSmallIcon(android.R.drawable.ic_dialog_info)
+                .setSmallIcon(R.drawable.ic_notification)
                 .setContentTitle(item.type + "\u5feb\u622a\u6b62\u4e86")
                 .setContentText(notificationLine(item, offsetMillis, catchUp))
                 .setStyle(new android.app.Notification.BigTextStyle().bigText(bigText(item, offsetMillis, catchUp)))
