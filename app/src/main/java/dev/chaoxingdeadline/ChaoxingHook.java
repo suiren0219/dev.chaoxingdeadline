@@ -209,6 +209,37 @@ public final class ChaoxingHook extends XposedModule {
         } catch (Throwable throwable) {
             log(Log.WARN, TAG, "dark mode: setResourcesWhenCreate hook failed", throwable);
         }
+        // WebView (H5) pages have their own light styling that ignores night
+        // resources. The platform WebView force-dark still applies to this
+        // host because its targetSdk is below 33; turn it on at construction.
+        try {
+            Class<?> webView = Class.forName("android.webkit.WebView");
+            int hooked = 0;
+            for (java.lang.reflect.Constructor<?> ctor : webView.getDeclaredConstructors()) {
+                Class<?>[] params = ctor.getParameterTypes();
+                if (params.length >= 1 && params[0] == android.content.Context.class) {
+                    hook(ctor)
+                            .setId("darkmode_webview_ctor_" + params.length)
+                            .intercept(chain -> {
+                                Object result = chain.proceed();
+                                try {
+                                    Object self = chain.getThisObject();
+                                    if (self instanceof android.webkit.WebView) {
+                                        android.webkit.WebSettings settings =
+                                                ((android.webkit.WebView) self).getSettings();
+                                        settings.setForceDark(android.webkit.WebSettings.FORCE_DARK_ON);
+                                    }
+                                } catch (Throwable ignored) {
+                                }
+                                return result;
+                            });
+                    hooked++;
+                }
+            }
+            log(Log.INFO, TAG, "dark mode: WebView force-dark hooked (" + hooked + " ctors)");
+        } catch (Throwable throwable) {
+            log(Log.WARN, TAG, "dark mode: WebView force-dark hook failed", throwable);
+        }
     }
 
     private volatile Boolean darkForceCache;
