@@ -33,6 +33,7 @@ public final class DeadlineReceiver extends BroadcastReceiver {
         }
         if (Intent.ACTION_BOOT_COMPLETED.equals(intent.getAction())) {
             DeadlineNotifier.rescheduleAll(context);
+            DeadlineWidgetProvider.updateAll(context);
             return;
         }
         if (!BridgeAuth.isValid(context, intent)) {
@@ -52,6 +53,7 @@ public final class DeadlineReceiver extends BroadcastReceiver {
         if (ACTION_CHECK.equals(intent.getAction())) {
             DeadlineNotifier.checkAll(context);
             OverlayBridge.publish(context);
+            DeadlineWidgetProvider.updateAll(context);
             return;
         }
         if (ACTION_NOTIFY.equals(intent.getAction())) {
@@ -59,15 +61,18 @@ public final class DeadlineReceiver extends BroadcastReceiver {
                     intent.getStringExtra(DeadlineNotifier.EXTRA_DEADLINE_ID),
                     intent.getLongExtra(DeadlineNotifier.EXTRA_OFFSET_MILLIS, 0L));
             OverlayBridge.publish(context);
+            DeadlineWidgetProvider.updateAll(context);
             return;
         }
         if (ACTION_IGNORE.equals(intent.getAction())) {
             DeadlineNotifier.ignoreItem(context, intent.getStringExtra(DeadlineNotifier.EXTRA_DEADLINE_ID));
             OverlayBridge.publish(context);
+            DeadlineWidgetProvider.updateAll(context);
             return;
         }
         if (ACTION_DELETE.equals(intent.getAction())) {
             DeadlineNotifier.deleteItem(context, intent.getStringExtra(DeadlineNotifier.EXTRA_DEADLINE_ID));
+            DeadlineWidgetProvider.updateAll(context);
             return;
         }
         if (ACTION_COURSE.equals(intent.getAction())) {
@@ -80,6 +85,7 @@ public final class DeadlineReceiver extends BroadcastReceiver {
                     intent.getStringExtra("course"),
                     intent.getStringExtra("raw"));
             OverlayBridge.publish(context);
+            DeadlineWidgetProvider.updateAll(context);
             context.sendBroadcast(new Intent(ACTION_REFRESH).setPackage(context.getPackageName()));
             return;
         }
@@ -116,6 +122,7 @@ public final class DeadlineReceiver extends BroadcastReceiver {
                         intent.getIntExtra("overlay_window_hours", AppSettings.OVERLAY_WINDOW_ALL));
             }
             OverlayBridge.publish(context);
+            DeadlineWidgetProvider.updateAll(context);
             context.sendBroadcast(new Intent(ACTION_REFRESH).setPackage(context.getPackageName()));
             return;
         }
@@ -143,6 +150,7 @@ public final class DeadlineReceiver extends BroadcastReceiver {
             Log.i(TAG, "Stored deadline from " + item.source + " type=" + item.type);
             DeadlineNotifier.rescheduleAll(context);
             OverlayBridge.publish(context);
+            DeadlineWidgetProvider.updateAll(context);
             context.sendBroadcast(new Intent(ACTION_REFRESH).setPackage(context.getPackageName()));
         } catch (Throwable throwable) {
             Log.e(TAG, "Failed to receive deadline", throwable);

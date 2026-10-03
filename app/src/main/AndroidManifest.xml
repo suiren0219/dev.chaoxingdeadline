@@ -56,5 +56,29 @@
                 <action android:name="android.intent.action.BOOT_COMPLETED" />
             </intent-filter>
         </receiver>
+        <!-- Widget providers run in the module process and only read DeadlineStore;
+             updates are pushed by the module itself, the launcher and the system. -->
+        <receiver
+            android:name=".DeadlineWidgetCompact"
+            android:exported="false"
+            android:label="@string/widget_compact_name">
+            <intent-filter>
+                <action android:name="android.appwidget.action.APPWIDGET_UPDATE" />
+            </intent-filter>
+            <meta-data
+                android:name="android.appwidget.provider"
+                android:resource="@xml/widget_compact_info" />
+        </receiver>
+        <receiver
+            android:name=".DeadlineWidgetList"
+            android:exported="false"
+            android:label="@string/widget_list_name">
+            <intent-filter>
+                <action android:name="android.appwidget.action.APPWIDGET_UPDATE" />
+            </intent-filter>
+            <meta-data
+                android:name="android.appwidget.provider"
+                android:resource="@xml/widget_list_info" />
+        </receiver>
     </application>
 </manifest>
