@@ -87,6 +87,15 @@ public final class AppSettings {
         syncRemotePreferences(context);
     }
 
+    public static boolean darkModeForceEnabled(Context context) {
+        return prefs(context).getBoolean("dark_mode_force", true);
+    }
+
+    public static void setDarkModeForceEnabled(Context context, boolean enabled) {
+        prefs(context).edit().putBoolean("dark_mode_force", enabled).apply();
+        syncRemotePreferences(context);
+    }
+
     public static int[] overlayWindowOptions() {
         return OVERLAY_WINDOW_OPTIONS.clone();
     }
@@ -121,6 +130,7 @@ public final class AppSettings {
                         .edit()
                         .putBoolean("overlay_enabled", overlayEnabled(context))
                         .putInt("overlay_window_hours", overlayWindowHours(context))
+                        .putBoolean("dark_mode_force", darkModeForceEnabled(context))
                         .apply();
             }
         } catch (Throwable ignored) {

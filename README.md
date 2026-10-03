@@ -20,7 +20,7 @@ LSPosed Xposed 模块，自动捕获超星学习通作业和考试截止时间�
 ## 本 fork 新增
 
 - **桌面小组件**：2x2「待办小卡」与 4x2（可拉伸）「待办列表」，纯 RemoteViews 实现，不引入额外依赖；配色采用 [miuix](https://github.com/compose-miuix-ui/miuix) 的 HyperOS 风格色板，深浅色跟随系统；单条待办可跳转学习通对应页面。对齐《Xiaomi HyperOS 小部件设计规范》的尺寸与交互约束（无部件内滑动）。
-- **深色模式入口（实验）**：学习通 7.0.4 内置了完整的深色模式设置页（`com.chaoxing.study.settings.DarkSettingActivity`），新版隐藏了入口。本模块在「学习通内设置面板」提供入口，直接启动应用自身的该页面；不做注入、不修改应用数据。
+- **强制深色模式（实验）**：学习通 7.0.4 内置了完整的深色主题（含 `(night)` 资源与隐藏设置页 `DarkSettingActivity`），但入口被隐藏、渲染被自身逻辑强制回浅色。本模块通过两个进程内 Hook 启用它：`AppCompatDelegateImpl.calculateNightMode()` 强制返回夜间 + HyperOS `ContextImpl.setResourcesWhenCreate` 让应用级资源以夜间配置创建。默认开启，可在模块设置或学习通内面板关闭（重启学习通生效）；纯进程内参数改写，不写任何文件、不碰系统分区。
 - 不扩大 Xposed 作用域，不新增权限。
 
 ## 致谢与署名

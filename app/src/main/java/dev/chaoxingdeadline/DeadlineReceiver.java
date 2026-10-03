@@ -121,6 +121,10 @@ public final class DeadlineReceiver extends BroadcastReceiver {
                 AppSettings.setOverlayWindowHours(context,
                         intent.getIntExtra("overlay_window_hours", AppSettings.OVERLAY_WINDOW_ALL));
             }
+            if (intent.hasExtra("dark_mode_force")) {
+                AppSettings.setDarkModeForceEnabled(context,
+                        intent.getBooleanExtra("dark_mode_force", true));
+            }
             OverlayBridge.publish(context);
             DeadlineWidgetProvider.updateAll(context);
             context.sendBroadcast(new Intent(ACTION_REFRESH).setPackage(context.getPackageName()));
