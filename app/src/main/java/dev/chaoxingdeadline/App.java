@@ -1,6 +1,11 @@
 package dev.chaoxingdeadline;
 
 import android.app.Application;
+import android.content.BroadcastReceiver;
+import android.content.Context;
+import android.content.Intent;
+import android.content.IntentFilter;
+import android.os.Build;
 
 import java.util.concurrent.CopyOnWriteArrayList;
 
@@ -19,6 +24,27 @@ public final class App extends Application implements XposedServiceHelper.OnServ
         DeadlineNotifier.ensureChannel(this);
         XposedServiceHelper.registerListener(this);
         DeadlineNotifier.rescheduleUpcomingOnly(this);
+        DeadlineWidgetProvider.updateAll(this);
+        listenConfigurationChanges(this);
+    }
+
+    /** Widgets bake dark/light palettes at update time, so re-render on theme changes. */
+    private static void listenConfigurationChanges(Context context) {
+        BroadcastReceiver receiver = new BroadcastReceiver() {
+            @Override
+            public void onReceive(Context ctx, Intent intent) {
+                DeadlineWidgetProvider.updateAll(ctx);
+            }
+        };
+        IntentFilter filter = new IntentFilter(Intent.ACTION_CONFIGURATION_CHANGED);
+        try {
+            if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.TIRAMISU) {
+                context.registerReceiver(receiver, filter, Context.RECEIVER_NOT_EXPORTED);
+            } else {
+                context.registerReceiver(receiver, filter);
+            }
+        } catch (Throwable ignored) {
+        }
     }
 
     @Override
