@@ -20,6 +20,7 @@ import android.widget.TextView;
 import android.widget.Toast;
 
 public final class SettingsActivity extends BaseActivity {
+    private static final String CHAOXING_PACKAGE = "com.chaoxing.mobile";
     private EditText notifyHours;
 
     @Override
@@ -57,6 +58,11 @@ public final class SettingsActivity extends BaseActivity {
         group1.addView(divider());
         group1.addView(switchRow("自动删除已完成待办", "已提交或已截止的项目自动移除", AppSettings.autoDeleteExpired(this),
                 (b, c) -> AppSettings.setAutoDeleteExpired(this, c)));
+        group1.addView(divider());
+        View darkHint = innerActionRow("深色模式（学习通内）",
+                "入口在学习通内面板：左上角 Deadline → 设置；点击打开学习通");
+        darkHint.setOnClickListener(v -> openChaoxing());
+        group1.addView(darkHint);
         content.addView(group1, groupParams());
 
         // -- 通知 --
@@ -95,6 +101,20 @@ public final class SettingsActivity extends BaseActivity {
         content.addView(about, groupParams());
 
         return root;
+    }
+
+    private void openChaoxing() {
+        try {
+            Intent intent = getPackageManager().getLaunchIntentForPackage(CHAOXING_PACKAGE);
+            if (intent == null) {
+                Toast.makeText(this, "未安装学习通", Toast.LENGTH_SHORT).show();
+                return;
+            }
+            intent.addFlags(Intent.FLAG_ACTIVITY_NEW_TASK);
+            startActivity(intent);
+        } catch (Throwable throwable) {
+            Toast.makeText(this, "打开学习通失败", Toast.LENGTH_SHORT).show();
+        }
     }
 
     private LinearLayout titleBar(String titleValue) {
