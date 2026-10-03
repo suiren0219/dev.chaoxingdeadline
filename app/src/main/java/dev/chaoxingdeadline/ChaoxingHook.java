@@ -895,7 +895,7 @@ public final class ChaoxingHook extends XposedModule {
 
         root.addView(settingsRow(activity,
                 "强制深色模式",
-                "实验：使用学习通内置深色主题，重启学习通后生效",
+                "实验：使用学习通内置深色主题，重启学习通后生效；作业卡片、评论栏等个别组件仍为浅色（学习通自身适配不全）",
                 darkModeForceEnabled() ? "已开启" : "已关闭",
                 false,
                 () -> {

@@ -50,7 +50,8 @@ public final class SettingsActivity extends BaseActivity {
         note.setPadding(dp(16), dp(14), dp(16), dp(14));
         note.addView(text("为什么有这个修改", 15, true, UiTheme.text(this)), new LinearLayout.LayoutParams(-1, -2));
         TextView noteBody = text("学习通升级后，内置的深色模式入口被隐藏了。作为一个深度深色模式爱好者，"
-                + "本 fork 通过 LSPosed 把这个入口找了回来；顺手做了桌面小组件，优化查看待办的体验。—— suiren0219",
+                + "本 fork 通过 LSPosed 把这个入口找了回来；顺手做了桌面小组件，优化查看待办的体验。—— suiren0219\n\n"
+                + "已知局限：作业卡片、底部评论栏等个别原生组件的颜色是学习通写死的，强制深色对它们无效，仍会显示为浅色。",
                 12, false, UiTheme.muted(this));
         noteBody.setLineSpacing(0f, 1.25f);
         noteBody.setPadding(0, dp(6), 0, 0);
@@ -71,8 +72,13 @@ public final class SettingsActivity extends BaseActivity {
         group1.addView(switchRow("自动删除已完成待办", "已提交或已截止的项目自动移除", AppSettings.autoDeleteExpired(this),
                 (b, c) -> AppSettings.setAutoDeleteExpired(this, c)));
         group1.addView(divider());
-        View darkHint = innerActionRow("深色模式（学习通内）",
-                "入口在学习通内面板：左上角 Deadline → 设置；点击打开学习通");
+        group1.addView(switchRow("强制深色模式",
+                "实验：使用学习通内置深色主题，重启学习通后生效；作业卡片、评论栏等个别组件仍为浅色（学习通自身深色适配不完整）",
+                AppSettings.darkModeForceEnabled(this),
+                (b, c) -> AppSettings.setDarkModeForceEnabled(this, c)));
+        group1.addView(divider());
+        View darkHint = innerActionRow("学习通深色设置页",
+                "打开学习通内置的深色设置页（旧版入口）；点击打开学习通");
         darkHint.setOnClickListener(v -> openChaoxing());
         group1.addView(darkHint);
         content.addView(group1, groupParams());
