@@ -749,6 +749,13 @@ public final class ChaoxingHook extends XposedModule {
                 true,
                 toggleOverlayAction));
 
+        root.addView(settingsRow(activity,
+                "深色模式",
+                "实验：打开学习通内置的深色模式设置页（新版被隐藏的入口）",
+                "打开",
+                false,
+                () -> openDarkSettingActivity(activity)));
+
         TextView section = new TextView(activity);
         section.setText("弹窗范围");
         section.setTextSize(13);
@@ -866,6 +873,26 @@ public final class ChaoxingHook extends XposedModule {
             button.setBackground(UiTheme.rounded(activity, UiTheme.card(activity), dp(activity, 12), UiTheme.stroke(activity)));
         }
         return button;
+    }
+
+    /**
+     * Launch Chaoxing's own hidden dark-mode settings page. The activity is
+     * declared in the host manifest (exported=false) and runs in the same
+     * process, so starting it from inside the host is indistinguishable from
+     * internal navigation — no reflection, no memory patching, nothing the
+     * risk SDK can flag. The app keeps managing its own preference key.
+     */
+    private void openDarkSettingActivity(Context context) {
+        try {
+            Intent intent = new Intent();
+            intent.setComponent(new ComponentName(
+                    TARGET_PACKAGE, "com.chaoxing.study.settings.DarkSettingActivity"));
+            intent.addFlags(Intent.FLAG_ACTIVITY_NEW_TASK);
+            context.startActivity(intent);
+            log(Log.INFO, TAG, "DarkSettingActivity launched");
+        } catch (Throwable throwable) {
+            log(Log.WARN, TAG, "open dark setting failed", throwable);
+        }
     }
 
     private void setOverlayEnabledFromPanel(Context context, boolean enabled) {
