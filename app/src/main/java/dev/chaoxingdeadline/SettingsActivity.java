@@ -48,7 +48,7 @@ public final class SettingsActivity extends BaseActivity {
         // -- 改动说明 --
         LinearLayout note = card();
         note.setPadding(dp(16), dp(14), dp(16), dp(14));
-        note.addView(text("为什么有这个修改", 15, true, UiTheme.text(this)), new LinearLayout.LayoutParams(-1, -2));
+        note.addView(text("本 fork 修改说明（suiren0219）", 15, true, UiTheme.text(this)), new LinearLayout.LayoutParams(-1, -2));
         TextView noteBody = text("学习通升级后，内置的深色模式入口被隐藏了。作为一个深度深色模式爱好者，"
                 + "本 fork 通过 LSPosed 把这个入口找了回来；顺手做了桌面小组件，优化查看待办的体验。—— suiren0219\n\n"
                 + "已知局限：作业卡片、底部评论栏等个别原生组件的颜色是学习通写死的，强制深色对它们无效，仍会显示为浅色。",
@@ -58,33 +58,37 @@ public final class SettingsActivity extends BaseActivity {
         note.addView(noteBody, new LinearLayout.LayoutParams(-1, -2));
         content.addView(note, new LinearLayout.LayoutParams(-1, -2));
 
-        // -- 通用 --
-        content.addView(sectionHeader("通用"));
-        LinearLayout group1 = card();
-        group1.addView(switchRow("隐藏桌面图标", "隐藏后仍可从 LSPosed 模块设置入口打开", AppSettings.launcherHidden(this),
+        // -- 原作者功能（上游 qingzhou704）--
+        content.addView(sectionHeader("原作者功能 · qingzhou704"));
+        LinearLayout upstreamGroup = card();
+        upstreamGroup.addView(switchRow("隐藏桌面图标", "隐藏后仍可从 LSPosed 模块设置入口打开", AppSettings.launcherHidden(this),
                 (b, c) -> AppSettings.setLauncherHidden(this, c)));
-        group1.addView(divider());
-        group1.addView(switchRow("学习通内弹窗", "打开学习通时显示待办摘要", AppSettings.overlayEnabled(this),
+        upstreamGroup.addView(divider());
+        upstreamGroup.addView(switchRow("学习通内弹窗", "打开学习通时显示待办摘要", AppSettings.overlayEnabled(this),
                 (b, c) -> AppSettings.setOverlayEnabled(this, c)));
-        group1.addView(divider());
-        group1.addView(overlayWindowRow());
-        group1.addView(divider());
-        group1.addView(switchRow("自动删除已完成待办", "已提交或已截止的项目自动移除", AppSettings.autoDeleteExpired(this),
+        upstreamGroup.addView(divider());
+        upstreamGroup.addView(overlayWindowRow());
+        upstreamGroup.addView(divider());
+        upstreamGroup.addView(switchRow("自动删除已完成待办", "已提交或已截止的项目自动移除", AppSettings.autoDeleteExpired(this),
                 (b, c) -> AppSettings.setAutoDeleteExpired(this, c)));
-        group1.addView(divider());
-        group1.addView(switchRow("强制深色模式",
+        content.addView(upstreamGroup, groupParams());
+
+        // -- 本 fork 新增（suiren0219）--
+        content.addView(sectionHeader("本 fork 新增 · suiren0219"));
+        LinearLayout forkGroup = card();
+        forkGroup.addView(switchRow("强制深色模式",
                 "实验：使用学习通内置深色主题，重启学习通后生效；作业卡片、评论栏等个别组件仍为浅色（学习通自身深色适配不完整）",
                 AppSettings.darkModeForceEnabled(this),
                 (b, c) -> AppSettings.setDarkModeForceEnabled(this, c)));
-        group1.addView(divider());
+        forkGroup.addView(divider());
         View darkHint = innerActionRow("学习通深色设置页（在学习通内）",
                 "入口在学习通首页的 Deadline 面板；点击打开学习通");
         darkHint.setOnClickListener(v -> openChaoxing());
-        group1.addView(darkHint);
-        content.addView(group1, groupParams());
+        forkGroup.addView(darkHint);
+        content.addView(forkGroup, groupParams());
 
-        // -- 通知 --
-        content.addView(sectionHeader("通知"));
+        // -- 通知（原作者功能）--
+        content.addView(sectionHeader("通知 · 原作者功能"));
         LinearLayout group2 = card();
         group2.addView(switchRow("最后提醒", "任务的截止时间到达3小时和30分钟时提醒", AppSettings.finalReminderEnabled(this),
                 (b, c) -> { AppSettings.prefs(this).edit().putBoolean("notify_enabled", c).apply(); DeadlineNotifier.rescheduleUpcomingOnly(this); }));
@@ -106,19 +110,29 @@ public final class SettingsActivity extends BaseActivity {
         group2.addView(testNotification);
         content.addView(group2, groupParams());
 
-        // -- 管理 --
-        content.addView(sectionHeader("管理"));
+        // -- 管理（原作者功能）--
+        content.addView(sectionHeader("管理 · 原作者功能"));
         View course = actionRow("课程管理", "手动选择哪些课程的作业和考试需要显示");
         course.setOnClickListener(v -> startActivity(new Intent(this, CourseBlockActivity.class)));
         content.addView(course, groupParams());
 
         // -- 关于 --
         content.addView(sectionHeader("其他"));
-        View about = actionRow("关于", "版本信息与开源许可");
+        View about = actionRow("关于", "当前版本 " + versionSubtitle() + " · 版本信息与开源许可");
         about.setOnClickListener(v -> startActivity(new Intent(this, AboutActivity.class)));
         content.addView(about, groupParams());
 
         return root;
+    }
+
+    private String versionSubtitle() {
+        try {
+            android.content.pm.PackageInfo info =
+                    getPackageManager().getPackageInfo(getPackageName(), 0);
+            return info.versionName + "（versionCode " + info.versionCode + "）";
+        } catch (Throwable ignored) {
+            return "未知";
+        }
     }
 
     private void openChaoxing() {
