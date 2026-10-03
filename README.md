@@ -2,6 +2,10 @@
 
 LSPosed Xposed 模块，自动捕获超星学习通作业和考试截止时间。
 
+> 本仓库 fork 自 [qingzhou704](https://github.com/qingzhou704) 的上游项目
+> [Xposed-Modules-Repo/dev.chaoxingdeadline](https://github.com/Xposed-Modules-Repo/dev.chaoxingdeadline)，
+> 在尊重原作者署名与 Apache-2.0 许可的前提下二次开发，新增功能见下文「本 fork 新增」。
+
 ## 下载
 
 [最新版本](https://github.com/Xposed-Modules-Repo/dev.chaoxingdeadline/releases/latest)
@@ -11,6 +15,18 @@ LSPosed Xposed 模块，自动捕获超星学习通作业和考试截止时间�
 1. 安装本模块并在 LSPosed Manager 中勾选，作用域选择「学习通」
 2. 打开学习通，模块自动捕获作业和考试的截止时间
 3. 截止前会发送系统通知提醒
+4. 桌面小组件：在桌面长按空白处添加「待办小卡」或「待办列表」，无需打开学习通即可查看未完成待办（适配澎湃OS 3.0 / Android 16，深浅色跟随系统）
+
+## 本 fork 新增
+
+- **桌面小组件**：2x2「待办小卡」与 4x2（可拉伸）「待办列表」，纯 RemoteViews 实现，不引入额外依赖；配色采用 [miuix](https://github.com/compose-miuix-ui/miuix) 的 HyperOS 风格色板，深浅色跟随系统；单条待办可跳转学习通对应页面。对齐《Xiaomi HyperOS 小部件设计规范》的尺寸与交互约束（无部件内滑动）。
+- **深色模式入口（实验）**：学习通 7.0.4 内置了完整的深色模式设置页（`com.chaoxing.study.settings.DarkSettingActivity`），新版隐藏了入口。本模块在「学习通内设置面板」提供入口，直接启动应用自身的该页面；不做注入、不修改应用数据。
+- 不扩大 Xposed 作用域，不新增权限。
+
+## 致谢与署名
+
+- 原项目作者：[qingzhou704](https://github.com/qingzhou704)，原作者与本 fork 的修改部分均遵循 [Apache License 2.0](LICENSE)。
+- 感谢原作者的学习通截止提醒；本仓库所有改动均为在其工作基础上的增量修改，原始提交历史完整保留。
 
 ## 构建
 
