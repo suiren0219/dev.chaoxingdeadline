@@ -139,7 +139,100 @@ public final class ChaoxingHook extends XposedModule {
         installOkHttpHooks(param.getClassLoader());
         installWebViewHooks();
         installActivityOverlayHook();
+        installDarkModeForce(param.getClassLoader());
         emitStatus("hooks installed", "onPackageReady");
+    }
+
+    /**
+     * Experimental forced dark mode for the host.
+     *
+     * Chaoxing ships complete night resources but (as of 7.0.4) renders light:
+     * AppCompatDelegateImpl follows the system-delivered uiMode, and MIUI
+     * hands this app a light configuration because its manifest declares
+     * force_dark_google=true ("adapts dark itself"). The hidden dark settings
+     * page writes preferences that nothing reads, so the shipped dark theme
+     * can never activate. Two in-process hooks flip the decision:
+     *
+     * 1. AppCompatDelegateImpl.calculateNightMode() -> MODE_NIGHT_YES, so
+     *    every AppCompatActivity applies its night resources;
+     * 2. ContextImpl.setResourcesWhenCreate(Resources) (HyperOS-specific
+     *    factory) so application-level resources start night as well.
+     *
+     * Purely in-process argument rewriting: nothing is written to disk and no
+     * system files are touched. Controlled by the dark_mode_force switch
+     * (default on); changes take effect after the host app is restarted.
+     */
+    private void installDarkModeForce(ClassLoader loader) {
+        if (!darkModeForceEnabled()) {
+            log(Log.INFO, TAG, "dark mode force disabled by setting");
+            return;
+        }
+        try {
+            Class<?> delegateImpl = Class.forName(
+                    "androidx.appcompat.app.AppCompatDelegateImpl", false, loader);
+            hook(delegateImpl.getDeclaredMethod("calculateNightMode"))
+                    .setId("darkmode_calculate_night_mode")
+                    .intercept(chain -> {
+                        chain.proceed();
+                        return android.app.UiModeManager.MODE_NIGHT_YES;
+                    });
+            log(Log.INFO, TAG, "dark mode: calculateNightMode hook installed");
+        } catch (Throwable throwable) {
+            log(Log.WARN, TAG, "dark mode: calculateNightMode hook failed", throwable);
+        }
+        try {
+            Class<?> contextImpl = Class.forName("android.app.ContextImpl");
+            hook(contextImpl.getDeclaredMethod("setResourcesWhenCreate",
+                            android.content.res.Resources.class))
+                    .setId("darkmode_set_resources_when_create")
+                    .intercept(chain -> {
+                        Object result = chain.proceed();
+                        try {
+                            Object res = chain.getArg(0);
+                            if (res instanceof android.content.res.Resources) {
+                                android.content.res.Resources resources = (android.content.res.Resources) res;
+                                int ui = resources.getConfiguration().uiMode
+                                        & android.content.res.Configuration.UI_MODE_NIGHT_MASK;
+                                if (ui != android.content.res.Configuration.UI_MODE_NIGHT_YES) {
+                                    android.content.res.Configuration night =
+                                            new android.content.res.Configuration(resources.getConfiguration());
+                                    night.uiMode = (night.uiMode & ~android.content.res.Configuration.UI_MODE_NIGHT_MASK)
+                                            | android.content.res.Configuration.UI_MODE_NIGHT_YES;
+                                    resources.updateConfiguration(night, resources.getDisplayMetrics());
+                                }
+                            }
+                        } catch (Throwable ignored) {
+                        }
+                        return result;
+                    });
+            log(Log.INFO, TAG, "dark mode: setResourcesWhenCreate hook installed");
+        } catch (Throwable throwable) {
+            log(Log.WARN, TAG, "dark mode: setResourcesWhenCreate hook failed", throwable);
+        }
+    }
+
+    private volatile Boolean darkForceCache;
+
+    private boolean darkModeForceEnabled() {
+        Boolean cached = darkForceCache;
+        if (cached != null) {
+            return cached;
+        }
+        boolean enabled = true;
+        try {
+            enabled = getRemotePreferences(AppSettings.PREFS).getBoolean("dark_mode_force", true);
+        } catch (Throwable ignored) {
+        }
+        darkForceCache = enabled;
+        return enabled;
+    }
+
+    private void setDarkModeForceFromPanel(Context context, boolean enabled) {
+        darkForceCache = enabled;
+        Intent intent = new Intent(DeadlineReceiver.ACTION_SETTINGS_UPDATE);
+        intent.setComponent(new ComponentName(MODULE_PACKAGE, MODULE_PACKAGE + ".DeadlineReceiver"));
+        intent.putExtra("dark_mode_force", enabled);
+        sendAuthenticatedBroadcast(context, intent, "update dark mode force");
     }
 
     @Override
@@ -750,11 +843,14 @@ public final class ChaoxingHook extends XposedModule {
                 toggleOverlayAction));
 
         root.addView(settingsRow(activity,
-                "深色模式",
-                "实验：打开学习通内置的深色模式设置页（新版被隐藏的入口）",
-                "打开",
+                "强制深色模式",
+                "实验：使用学习通内置深色主题，重启学习通后生效",
+                darkModeForceEnabled() ? "已开启" : "已关闭",
                 false,
-                () -> openDarkSettingActivity(activity)));
+                () -> {
+                    setDarkModeForceFromPanel(activity, !darkModeForceEnabled());
+                    android.widget.Toast.makeText(activity, "重启学习通后生效", android.widget.Toast.LENGTH_SHORT).show();
+                }));
 
         TextView section = new TextView(activity);
         section.setText("弹窗范围");
