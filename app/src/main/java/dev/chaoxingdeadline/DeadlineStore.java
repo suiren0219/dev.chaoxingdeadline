@@ -9,8 +9,10 @@ import android.database.sqlite.SQLiteOpenHelper;
 
 import java.util.ArrayList;
 import java.util.Collections;
+import java.util.HashMap;
 import java.util.HashSet;
 import java.util.List;
+import java.util.Map;
 import java.util.Set;
 
 public final class DeadlineStore extends SQLiteOpenHelper {
@@ -22,6 +24,10 @@ public final class DeadlineStore extends SQLiteOpenHelper {
     private static final String TYPE_ALL = "\u5168\u90e8";
     private static final String TYPE_HOMEWORK = "\u4f5c\u4e1a";
     private static final String TYPE_EXAM = "\u8003\u8bd5";
+    // courses table lookups happen on every activeItems()/widget refresh; cache the
+    // (small) course-name mapping to avoid the N+1 query pattern.
+    private static final Map<String, String> COURSE_NAME_CACHE =
+            Collections.synchronizedMap(new HashMap<>());
     private final Context context;
 
     public DeadlineStore(Context context) {
@@ -159,15 +165,22 @@ public final class DeadlineStore extends SQLiteOpenHelper {
             item.id = item.stableId();
         }
         SQLiteDatabase db = getWritableDatabase();
-        pruneIgnored(db);
-        if (isManuallyIgnored(db, item)) {
-            return;
-        }
-        preserveSubmissionState(db, item);
-        db.replace("deadlines", null, item.toValues());
-        deleteLikelyDuplicates(db, item);
-        if (AppSettings.autoDeleteExpired(context)) {
-            prune();
+        db.beginTransaction();
+        try {
+            pruneIgnored(db);
+            if (isManuallyIgnored(db, item)) {
+                db.setTransactionSuccessful();
+                return;
+            }
+            preserveSubmissionState(db, item);
+            db.replace("deadlines", null, item.toValues());
+            deleteLikelyDuplicates(db, item);
+            if (AppSettings.autoDeleteExpired(context)) {
+                prune();
+            }
+            db.setTransactionSuccessful();
+        } finally {
+            db.endTransaction();
         }
     }
 
@@ -195,6 +208,8 @@ public final class DeadlineStore extends SQLiteOpenHelper {
         values.put("updated_at", System.currentTimeMillis());
         SQLiteDatabase db = getWritableDatabase();
         db.replace("courses", null, values);
+        COURSE_NAME_CACHE.remove(cleanCourseId + "|" + cleanClassId);
+        COURSE_NAME_CACHE.remove(cleanCourseId + "|");
         backfillCourseName(db, cleanCourseId, cleanClassId, cleanName);
         if (isCourseFullyDisabled(cleanName)) {
             CourseScanScores.forceNeverScan(context, new String[]{cleanCourseId}, new String[]{cleanClassId});
@@ -231,6 +246,11 @@ public final class DeadlineStore extends SQLiteOpenHelper {
         if (empty(courseId) && empty(classId)) {
             return "";
         }
+        String cacheKey = safe(courseId) + "|" + safe(classId);
+        String cached = COURSE_NAME_CACHE.get(cacheKey);
+        if (cached != null) {
+            return cached;
+        }
         String selection;
         String[] args;
         if (!empty(classId)) {
@@ -242,7 +262,11 @@ public final class DeadlineStore extends SQLiteOpenHelper {
         }
         try (Cursor cursor = getReadableDatabase().query("courses", new String[]{"name"}, selection, args,
                 null, null, "updated_at DESC", "1")) {
-            return cursor.moveToFirst() ? cursor.getString(0) : "";
+            String name = cursor.moveToFirst() ? cursor.getString(0) : "";
+            if (!name.isEmpty()) {
+                COURSE_NAME_CACHE.put(cacheKey, name);
+            }
+            return name;
         } catch (Throwable ignored) {
             return "";
         }
@@ -404,9 +428,9 @@ public final class DeadlineStore extends SQLiteOpenHelper {
 
     public List<DeadlineItem> activeItems() {
         ArrayList<DeadlineItem> items = new ArrayList<>();
-        if (AppSettings.autoDeleteExpired(context)) {
-            prune();
-        }
+        // No prune() here: this is a hot read path (5s UI poll, every widget refresh and
+        // broadcast) and must not carry write side effects. Expired rows are pruned on
+        // upsert and when auto-delete is switched on.
         String where = AppSettings.autoDeleteExpired(context) ? "due_at > ?" : null;
         String[] args = AppSettings.autoDeleteExpired(context)
                 ? new String[]{String.valueOf(System.currentTimeMillis())}

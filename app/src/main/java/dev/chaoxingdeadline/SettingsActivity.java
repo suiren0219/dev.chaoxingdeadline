@@ -77,8 +77,8 @@ public final class SettingsActivity extends BaseActivity {
                 AppSettings.darkModeForceEnabled(this),
                 (b, c) -> AppSettings.setDarkModeForceEnabled(this, c)));
         group1.addView(divider());
-        View darkHint = innerActionRow("学习通深色设置页",
-                "打开学习通内置的深色设置页（旧版入口）；点击打开学习通");
+        View darkHint = innerActionRow("学习通深色设置页（在学习通内）",
+                "入口在学习通首页的 Deadline 面板；点击打开学习通");
         darkHint.setOnClickListener(v -> openChaoxing());
         group1.addView(darkHint);
         content.addView(group1, groupParams());

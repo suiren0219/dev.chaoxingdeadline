@@ -8,7 +8,13 @@ LSPosed Xposed 模块，自动捕获超星学习通作业和考试截止时间�
 
 ## 下载
 
-[最新版本](https://github.com/Xposed-Modules-Repo/dev.chaoxingdeadline/releases/latest)
+[最新版本（本 fork 的 Release）](https://github.com/suiren0219/dev.chaoxingdeadline/releases/latest)
+
+> 上游仓库的 [Release](https://github.com/Xposed-Modules-Repo/dev.chaoxingdeadline/releases/latest) 只包含原作者的功能，
+> 本 fork 的小组件与深色模式请从上方链接下载。
+>
+> **签名说明**：`release` 包使用本仓库自己的签名，`debug` 包使用开发机调试签名，两者互不兼容；
+> 与原作者官方包的签名也不互通。覆盖安装请选择与已装版本相同签名的包，否则需要先卸载（会清除模块数据）。
 
 ## 使用
 
@@ -20,7 +26,8 @@ LSPosed Xposed 模块，自动捕获超星学习通作业和考试截止时间�
 ## 本 fork 新增
 
 - **桌面小组件**：2x2「待办小卡」与 4x2（可拉伸）「待办列表」，纯 RemoteViews 实现，不引入额外依赖；配色采用 [miuix](https://github.com/compose-miuix-ui/miuix) 的 HyperOS 风格色板，深浅色跟随系统；单条待办可跳转学习通对应页面。对齐《Xiaomi HyperOS 小部件设计规范》的尺寸与交互约束（无部件内滑动）。
-- **强制深色模式（实验）**：学习通 7.0.4 内置了完整的深色主题（含 `(night)` 资源与隐藏设置页 `DarkSettingActivity`），但入口被隐藏、渲染被自身逻辑强制回浅色。本模块通过两个进程内 Hook 启用它：`AppCompatDelegateImpl.calculateNightMode()` 强制返回夜间 + HyperOS `ContextImpl.setResourcesWhenCreate` 让应用级资源以夜间配置创建。默认开启，可在模块设置或学习通内面板关闭（重启学习通生效）；纯进程内参数改写，不写任何文件、不碰系统分区。
+- **强制深色模式（实验）**：学习通 7.0.4 内置了完整的深色主题（含 `(night)` 资源与隐藏设置页 `DarkSettingActivity`），但入口被隐藏、渲染被自身逻辑强制回浅色。本模块通过四个进程内 Hook 启用它：`AppCompatDelegateImpl.calculateNightMode()` 强制返回夜间 + HyperOS `ContextImpl.setResourcesWhenCreate` 让应用级资源以夜间配置创建 + 向宿主皮肤引擎注入 `night_mode=true` + 对 WebView 页面打开平台 Force Dark。默认开启，可在模块设置或学习通内面板关闭（重启学习通生效）；纯进程内参数改写，不写任何文件、不碰系统分区。
+- **1.5 修复**：课程扫描评分不再自动屏蔽课程（此前连续多天空扫描会让该课程待办从列表/小组件/通知中静默消失，现只降频、数据保留）；错过的提醒按最贴近当前的档位补发（此前 20 分钟后截止的新条目会误报「提前 24 小时」）；修复弹层「已提交抑制」可能误杀 5 分钟内相近截止的待办；提醒/弹窗/小组件相关数据库与闹钟操作移入后台线程；通知改用应用自己的单色图标。
 - 不扩大 Xposed 作用域，不新增权限。
 
 ## 致谢与署名

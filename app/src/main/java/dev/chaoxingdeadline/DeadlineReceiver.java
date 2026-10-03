@@ -7,6 +7,8 @@ import android.util.Log;
 
 import java.nio.charset.StandardCharsets;
 import java.util.Base64;
+import java.util.concurrent.ExecutorService;
+import java.util.concurrent.Executors;
 
 public final class DeadlineReceiver extends BroadcastReceiver {
     public static final String ACTION_ITEM = "dev.chaoxingdeadline.DEADLINE_ITEM";
@@ -25,12 +27,34 @@ public final class DeadlineReceiver extends BroadcastReceiver {
     public static final String EXTRA_STATUS = "status";
     public static final String EXTRA_SOURCE = "source";
     private static final String TAG = "ChaoxingDeadline";
+    private static final ExecutorService EXECUTOR = Executors.newSingleThreadExecutor(runnable -> {
+        Thread thread = new Thread(runnable, "chaoxingdeadline-receiver");
+        thread.setDaemon(true);
+        return thread;
+    });
 
     @Override
     public void onReceive(Context context, Intent intent) {
         if (intent == null) {
             return;
         }
+        // Every branch touches SQLite, AlarmManager or widgets; keep that off the main
+        // thread so a large backlog can't ANR the receiver. goAsync keeps the process
+        // alive until handle() finishes, and the single-threaded executor preserves
+        // broadcast ordering.
+        PendingResult result = goAsync();
+        EXECUTOR.execute(() -> {
+            try {
+                handle(context, intent);
+            } catch (Throwable throwable) {
+                Log.e(TAG, "receiver failed for action " + intent.getAction(), throwable);
+            } finally {
+                result.finish();
+            }
+        });
+    }
+
+    private static void handle(Context context, Intent intent) {
         if (Intent.ACTION_BOOT_COMPLETED.equals(intent.getAction())) {
             DeadlineNotifier.rescheduleAll(context);
             DeadlineWidgetProvider.updateAll(context);

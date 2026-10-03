@@ -88,7 +88,7 @@ public final class AboutActivity extends BaseActivity {
         try {
             return "版本 " + getPackageManager().getPackageInfo(getPackageName(), 0).versionName;
         } catch (Throwable ignored) {
-            return "版本 1.4";
+            return "版本未知";
         }
     }
 
