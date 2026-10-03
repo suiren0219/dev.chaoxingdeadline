@@ -11,9 +11,10 @@ import android.widget.ScrollView;
 import android.widget.TextView;
 
 public final class AboutActivity extends BaseActivity {
-    private static final String GITHUB_URL = "https://github.com/Xposed-Modules-Repo/dev.chaoxingdeadline";
-    private static final String LICENSE_URL = GITHUB_URL + "/blob/master/LICENSE";
-    private static final String NOTICE_URL = GITHUB_URL + "/blob/master/NOTICE";
+    private static final String FORK_URL = "https://github.com/suiren0219/dev.chaoxingdeadline";
+    private static final String UPSTREAM_URL = "https://github.com/Xposed-Modules-Repo/dev.chaoxingdeadline";
+    private static final String LICENSE_URL = FORK_URL + "/blob/master/LICENSE";
+    private static final String NOTICE_URL = FORK_URL + "/blob/master/NOTICE";
 
     @Override
     protected void onCreate(Bundle savedInstanceState) {
@@ -51,15 +52,23 @@ public final class AboutActivity extends BaseActivity {
         appName.setPadding(0, 0, 0, dp(4));
         content.addView(appName, new LinearLayout.LayoutParams(-1, -2));
 
-        TextView version = text("版本 1.3", 14, false, UiTheme.muted(this));
+        TextView version = text(versionLine(), 14, false, UiTheme.muted(this));
         version.setGravity(Gravity.CENTER);
         version.setPadding(0, 0, 0, dp(28));
         content.addView(version, new LinearLayout.LayoutParams(-1, -2));
 
         // Links
-        View source = actionRow("查看源代码", "在 GitHub 上查看完整源代码");
-        source.setOnClickListener(v -> startActivity(new Intent(Intent.ACTION_VIEW, Uri.parse(GITHUB_URL))));
+        View source = actionRow("查看源代码", "本仓库（fork）在 GitHub 上的完整源代码");
+        source.setOnClickListener(v -> startActivity(new Intent(Intent.ACTION_VIEW, Uri.parse(FORK_URL))));
         content.addView(source, groupParams());
+
+        View author = actionRow("原作者 · qingzhou704", "学习通截止提醒（上游项目）");
+        author.setOnClickListener(v -> startActivity(new Intent(Intent.ACTION_VIEW, Uri.parse(UPSTREAM_URL))));
+        content.addView(author, groupParams());
+
+        View maintainer = actionRow("修改维护 · suiren0219", "本 fork：桌面小组件、深色模式入口");
+        maintainer.setOnClickListener(v -> startActivity(new Intent(Intent.ACTION_VIEW, Uri.parse(FORK_URL))));
+        content.addView(maintainer, groupParams());
 
         View license = actionRow("开源许可", "本项目基于 Apache License 2.0 开源");
         license.setOnClickListener(v -> startActivity(new Intent(Intent.ACTION_VIEW, Uri.parse(LICENSE_URL))));
@@ -73,6 +82,14 @@ public final class AboutActivity extends BaseActivity {
         content.addView(disclaimer, groupParams());
 
         return root;
+    }
+
+    private String versionLine() {
+        try {
+            return "版本 " + getPackageManager().getPackageInfo(getPackageName(), 0).versionName;
+        } catch (Throwable ignored) {
+            return "版本 1.4";
+        }
     }
 
     private LinearLayout titleBar(String titleValue) {
