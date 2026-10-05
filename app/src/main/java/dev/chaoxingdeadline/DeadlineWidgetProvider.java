@@ -50,6 +50,22 @@ public abstract class DeadlineWidgetProvider extends AppWidgetProvider {
         return UiTheme.dark(context) ? DANGER_DARK : DANGER_LIGHT;
     }
 
+    /** Chapter task points use a neutral/teal accent so they read apart from homework. */
+    static int chapterText(Context context) {
+        return UiTheme.dark(context) ? 0xFF4FD1C5 : 0xFF0E9F8E;
+    }
+
+    /** Badge colour for a given deadline type. */
+    static int typeColor(Context context, String type) {
+        if ("\u8003\u8bd5".equals(type)) {
+            return dangerText(context);
+        }
+        if ("\u7ae0\u8282".equals(type)) {
+            return chapterText(context);
+        }
+        return accent(context);
+    }
+
     /** Push fresh data into every widget instance of both sizes. */
     public static void updateAll(Context context) {
         try {
@@ -75,14 +91,18 @@ public abstract class DeadlineWidgetProvider extends AppWidgetProvider {
         }
     }
 
-    /** Pending homework/exam items: not submitted, not due yet, not blocked. */
+    /** Pending items: not submitted, not due yet, not blocked, inside the widget window. */
     static List<DeadlineItem> pendingItems(Context context) {
         ArrayList<DeadlineItem> pending = new ArrayList<>();
         try {
             long now = System.currentTimeMillis();
+            int windowHours = AppSettings.widgetWindowHours(context);
+            long horizon = windowHours == AppSettings.OVERLAY_WINDOW_ALL
+                    ? Long.MAX_VALUE
+                    : now + windowHours * 60L * 60L * 1000L;
             List<DeadlineItem> items = new DeadlineStore(context).activeItems();
             for (DeadlineItem item : items) {
-                if (item == null || item.submitted || item.dueAt <= now) {
+                if (item == null || item.submitted || item.dueAt <= now || item.dueAt > horizon) {
                     continue;
                 }
                 pending.add(item);
@@ -90,6 +110,19 @@ public abstract class DeadlineWidgetProvider extends AppWidgetProvider {
         } catch (Throwable ignored) {
         }
         return pending;
+    }
+
+    /** Manual refresh button: asks the module process to re-render every widget. */
+    static PendingIntent refreshPendingIntent(Context context) {
+        Intent intent = new Intent(context, DeadlineReceiver.class)
+                .setAction(DeadlineReceiver.ACTION_WIDGET_REFRESH)
+                .setPackage(context.getPackageName());
+        BridgeAuth.attach(context, intent);
+        return PendingIntent.getBroadcast(
+                context,
+                "widget_refresh".hashCode(),
+                intent,
+                PendingIntent.FLAG_UPDATE_CURRENT | PendingIntent.FLAG_IMMUTABLE);
     }
 
     static PendingIntent mainPendingIntent(Context context) {

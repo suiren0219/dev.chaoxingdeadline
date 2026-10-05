@@ -24,6 +24,7 @@ public final class DeadlineStore extends SQLiteOpenHelper {
     private static final String TYPE_ALL = "\u5168\u90e8";
     private static final String TYPE_HOMEWORK = "\u4f5c\u4e1a";
     private static final String TYPE_EXAM = "\u8003\u8bd5";
+    private static final String TYPE_CHAPTER = "\u7ae0\u8282";
     // courses table lookups happen on every activeItems()/widget refresh; cache the
     // (small) course-name mapping to avoid the N+1 query pattern.
     private static final Map<String, String> COURSE_NAME_CACHE =
@@ -164,6 +165,7 @@ public final class DeadlineStore extends SQLiteOpenHelper {
         if (item.id == null || item.id.isEmpty()) {
             item.id = item.stableId();
         }
+        boolean manual = "manual".equals(item.source);
         SQLiteDatabase db = getWritableDatabase();
         db.beginTransaction();
         try {
@@ -172,15 +174,50 @@ public final class DeadlineStore extends SQLiteOpenHelper {
                 db.setTransactionSuccessful();
                 return;
             }
-            preserveSubmissionState(db, item);
-            db.replace("deadlines", null, item.toValues());
-            deleteLikelyDuplicates(db, item);
+            if (manual) {
+                // A manual entry corrects an already-captured row for the same task in
+                // place instead of duplicating it — and it never deletes captured rows.
+                String capturedId = findCapturedWithTitle(db, item.type, item.title.trim(), item.dueAt);
+                if (capturedId != null) {
+                    ContentValues values = new ContentValues();
+                    values.put("due_at", item.dueAt);
+                    values.put("updated_at", System.currentTimeMillis());
+                    if (!empty(item.course)) {
+                        values.put("course", item.course);
+                        values.put("course_confidence", 100);
+                    }
+                    if (item.url != null && !item.url.isEmpty()) {
+                        values.put("url", item.url);
+                    }
+                    db.update("deadlines", values, "id = ?", new String[]{capturedId});
+                    item.id = capturedId;
+                } else {
+                    preserveSubmissionState(db, item);
+                    db.replace("deadlines", null, item.toValues());
+                }
+            } else {
+                preserveSubmissionState(db, item);
+                db.replace("deadlines", null, item.toValues());
+                deleteLikelyDuplicates(db, item);
+            }
             if (AppSettings.autoDeleteExpired(context)) {
                 prune();
             }
             db.setTransactionSuccessful();
         } finally {
             db.endTransaction();
+        }
+    }
+
+    /** Latest captured (non-manual) row with the same type and title, nearest to dueAt. */
+    private String findCapturedWithTitle(SQLiteDatabase db, String type, String title, long dueAt) {
+        try (Cursor cursor = db.query("deadlines", new String[]{"id"},
+                "(source IS NULL OR source != 'manual') AND type = ? AND title = ?",
+                new String[]{safe(type), title}, null, null,
+                "ABS(due_at - " + dueAt + ") ASC, updated_at DESC", "1")) {
+            return cursor.moveToFirst() ? cursor.getString(0) : null;
+        } catch (Throwable ignored) {
+            return null;
         }
     }
 
@@ -329,6 +366,14 @@ public final class DeadlineStore extends SQLiteOpenHelper {
                 "type = ? AND title = ? AND ABS(due_at - ?) <= ?",
                 new String[]{item.type, item.title, String.valueOf(item.dueAt), String.valueOf(window)})) {
             item.setSubmissionState(DeadlineItem.SUBMISSION_SUBMITTED);
+            return;
+        }
+        // A manual entry the user marked done may carry a guessed deadline far off the
+        // captured one; the type+title pair is still the same task.
+        if (!empty(item.title) && hasSubmittedMatch(db,
+                "type = ? AND title = ? AND source = 'manual'",
+                new String[]{item.type, item.title})) {
+            item.setSubmissionState(DeadlineItem.SUBMISSION_SUBMITTED);
         }
     }
 
@@ -439,7 +484,7 @@ public final class DeadlineStore extends SQLiteOpenHelper {
                 "deadlines", null, where, args, null, null, "due_at ASC")) {
             while (cursor.moveToNext()) {
                 DeadlineItem item = DeadlineItem.fromCursor(cursor);
-                if (!TYPE_HOMEWORK.equals(item.type) && !TYPE_EXAM.equals(item.type)) {
+                if (!isSupportedType(item.type)) {
                     continue;
                 }
                 resolveCourse(item);
@@ -449,6 +494,30 @@ public final class DeadlineStore extends SQLiteOpenHelper {
             }
         }
         return items;
+    }
+
+    /** Homework, exam and chapter task points are the types this module tracks. */
+    public static boolean isSupportedType(String type) {
+        return TYPE_HOMEWORK.equals(type) || TYPE_EXAM.equals(type) || TYPE_CHAPTER.equals(type);
+    }
+
+    /** Types offered in the per-course management screen, in display order. */
+    public static String[] managedTypes() {
+        return new String[]{TYPE_HOMEWORK, TYPE_EXAM, TYPE_CHAPTER};
+    }
+
+    /** Marks an item done (or undone) by hand; the hook still overwrites it on next capture. */
+    public void setSubmitted(String id, boolean submitted) {
+        if (id == null || id.isEmpty()) {
+            return;
+        }
+        SQLiteDatabase db = getWritableDatabase();
+        ContentValues values = new ContentValues();
+        values.put("submitted", submitted ? 1 : 0);
+        values.put("submit_state", submitted
+                ? DeadlineItem.SUBMISSION_SUBMITTED : DeadlineItem.SUBMISSION_UNSUBMITTED);
+        values.put("updated_at", System.currentTimeMillis());
+        db.update("deadlines", values, "id = ?", new String[]{id});
     }
 
     public int countAll() {
@@ -568,6 +637,7 @@ public final class DeadlineStore extends SQLiteOpenHelper {
         Set<String> rules = new HashSet<>(blockedRules());
         rules.add(blockKey(cleanCourse, TYPE_HOMEWORK));
         rules.add(blockKey(cleanCourse, TYPE_EXAM));
+        rules.add(blockKey(cleanCourse, TYPE_CHAPTER));
         prefs().edit().putStringSet(KEY_BLOCKED_RULES, rules).apply();
     }
 
@@ -597,7 +667,12 @@ public final class DeadlineStore extends SQLiteOpenHelper {
     }
 
     private boolean isCourseFullyDisabled(String course) {
-        return isBlocked(course, TYPE_HOMEWORK) && isBlocked(course, TYPE_EXAM);
+        for (String type : managedTypes()) {
+            if (!isBlocked(course, type)) {
+                return false;
+            }
+        }
+        return true;
     }
 
     private void syncCourseScanState(String course) {

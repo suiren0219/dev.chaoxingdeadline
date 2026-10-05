@@ -31,6 +31,8 @@ public final class DeadlineWidgetCompact extends DeadlineWidgetProvider {
                     ? DeadlineWidgetProvider.dangerText(context) : DeadlineWidgetProvider.mutedText(context));
         }
         views.setOnClickPendingIntent(R.id.widget_compact_root, mainPendingIntent(context));
+        views.setTextColor(R.id.w_refresh, DeadlineWidgetProvider.mutedText(context));
+        views.setOnClickPendingIntent(R.id.w_refresh, refreshPendingIntent(context));
         return views;
     }
 

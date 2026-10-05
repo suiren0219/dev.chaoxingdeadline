@@ -224,7 +224,8 @@ public final class ChaoxingHook extends XposedModule {
                                 Object result = chain.proceed();
                                 try {
                                     Object self = chain.getThisObject();
-                                    if (self instanceof android.webkit.WebView) {
+                                    if (self instanceof android.webkit.WebView
+                                            && Build.VERSION.SDK_INT >= Build.VERSION_CODES.Q) {
                                         android.webkit.WebSettings settings =
                                                 ((android.webkit.WebView) self).getSettings();
                                         settings.setForceDark(android.webkit.WebSettings.FORCE_DARK_ON);
@@ -1349,12 +1350,25 @@ public final class ChaoxingHook extends XposedModule {
         return a.dueAt == b.dueAt;
     }
 
+    /** Chapter tasks are opt-in; the overlay follows the notification switch. */
+    private boolean chapterNotificationsEnabled() {
+        try {
+            return getRemotePreferences(AppSettings.PREFS).getBoolean("notify_chapter", false);
+        } catch (Throwable ignored) {
+            return false;
+        }
+    }
+
     private void addOverlayTodo(List<OverlayTodo> todos, OverlayTodo todo, long now) {
         if (todo == null || !isInOverlayWindow(todo.dueAt, now)) {
             return;
         }
         if (!"\u4f5c\u4e1a".equals(todo.type) && !"\u8003\u8bd5".equals(todo.type)) {
-            return;
+            // Chapter tasks reach the overlay only when their notifications are on;
+            // they are opt-in because they tend to be numerous.
+            if (!"\u7ae0\u8282".equals(todo.type) || !chapterNotificationsEnabled()) {
+                return;
+            }
         }
         for (int i = 0; i < todos.size(); i++) {
             OverlayTodo old = todos.get(i);

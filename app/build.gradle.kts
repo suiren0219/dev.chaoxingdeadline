@@ -19,8 +19,8 @@ android {
         applicationId = "dev.chaoxingdeadline"
         minSdk = 26
         targetSdk = 36
-        versionCode = 7
-        versionName = "1.5.1"
+        versionCode = 8
+        versionName = "1.6.0"
     }
 
     signingConfigs {
@@ -69,4 +69,9 @@ dependencies {
     compileOnly(libs.libxposed.api)
     implementation(files("libs/service-102.0.0-patched.aar"))
     implementation(files("libs/interface-102.0.0-patched.aar"))
+
+    // DeadlineParser is plain string/regex work, so it is testable without a device.
+    testImplementation("junit:junit:4.13.2")
+    // android.jar ships org.json as a throwing stub; a real one makes the JSON branch testable.
+    testImplementation("org.json:json:20240303")
 }
