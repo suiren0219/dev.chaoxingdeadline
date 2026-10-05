@@ -24,6 +24,7 @@ public final class App extends Application implements XposedServiceHelper.OnServ
         DeadlineNotifier.ensureChannel(this);
         XposedServiceHelper.registerListener(this);
         DeadlineNotifier.rescheduleUpcomingOnly(this);
+        DeadlineNotifier.scheduleNextDigest(this);
         DeadlineWidgetProvider.updateAll(this);
         listenConfigurationChanges(this);
     }

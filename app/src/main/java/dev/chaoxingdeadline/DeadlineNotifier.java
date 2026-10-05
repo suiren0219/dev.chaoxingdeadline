@@ -10,7 +10,10 @@ import android.content.Intent;
 import android.content.SharedPreferences;
 import android.content.pm.PackageManager;
 import android.os.Build;
+import android.util.Log;
 
+import java.util.ArrayList;
+import java.util.Calendar;
 import java.util.HashSet;
 import java.util.List;
 import java.util.Map;
@@ -24,6 +27,8 @@ public final class DeadlineNotifier {
     public static final String CHANNEL_URGENT = "deadline_urgent";
     /** Quiet hours: delivered silently so nothing is dropped while you sleep. */
     public static final String CHANNEL_QUIET = "deadline_quiet";
+    /** Daily digest: one morning summary notification. */
+    public static final String CHANNEL_DIGEST = "deadline_digest";
 
     private static final String PREFS = "deadline_notify";
     private static final String KEY_ALARMS = "scheduled_alarms";
@@ -52,6 +57,9 @@ public final class DeadlineNotifier {
         createChannel(manager, CHANNEL_QUIET, "\u514d\u6253\u6270\u63d0\u9192",
                 "\u514d\u6253\u6270\u65f6\u6bb5\u5185\u4ea7\u751f\u7684\u63d0\u9192\uff0c\u4e0d\u4f1a\u53d1\u58f0\u6216\u5f39\u51fa",
                 NotificationManager.IMPORTANCE_LOW);
+        createChannel(manager, CHANNEL_DIGEST, "每日摘要",
+                "每天定时推送的待办汇总，列出今天和未来 3 天的截止项",
+                NotificationManager.IMPORTANCE_DEFAULT);
     }
 
     private static void createChannel(NotificationManager manager, String id,
@@ -187,6 +195,152 @@ public final class DeadlineNotifier {
     /** Reminders falling inside the quiet window are pushed to the moment it ends. */
     private static long shiftForQuietHours(Context context, long triggerAt) {
         return AppSettings.shiftOutOfQuietHours(context, triggerAt);
+    }
+
+    // -- daily digest --
+
+    /** Schedule (or cancel) the next morning-digest alarm from current settings. */
+    public static void scheduleNextDigest(Context context) {
+        AlarmManager alarm = (AlarmManager) context.getSystemService(Context.ALARM_SERVICE);
+        if (alarm == null) {
+            return;
+        }
+        if (!AppSettings.dailyDigestEnabled(context)) {
+            cancelDigestAlarm(context);
+            return;
+        }
+        int minute = AppSettings.digestMinuteOfDay(context);
+        Calendar calendar = Calendar.getInstance();
+        calendar.set(Calendar.HOUR_OF_DAY, minute / 60);
+        calendar.set(Calendar.MINUTE, minute % 60);
+        calendar.set(Calendar.SECOND, 0);
+        calendar.set(Calendar.MILLISECOND, 0);
+        if (calendar.getTimeInMillis() <= System.currentTimeMillis()) {
+            calendar.add(Calendar.DAY_OF_MONTH, 1);
+        }
+        long triggerAt = shiftForQuietHours(context, calendar.getTimeInMillis());
+        PendingIntent pending = digestAlarmIntent(context, PendingIntent.FLAG_UPDATE_CURRENT);
+        if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.S && !alarm.canScheduleExactAlarms()) {
+            alarm.setAndAllowWhileIdle(AlarmManager.RTC_WAKEUP, triggerAt, pending);
+            return;
+        }
+        alarm.setExactAndAllowWhileIdle(AlarmManager.RTC_WAKEUP, triggerAt, pending);
+    }
+
+    private static void cancelDigestAlarm(Context context) {
+        AlarmManager alarm = (AlarmManager) context.getSystemService(Context.ALARM_SERVICE);
+        if (alarm == null) {
+            return;
+        }
+        PendingIntent pending = digestAlarmIntent(context, PendingIntent.FLAG_NO_CREATE);
+        if (pending != null) {
+            alarm.cancel(pending);
+            pending.cancel();
+        }
+    }
+
+    private static PendingIntent digestAlarmIntent(Context context, int flags) {
+        Intent intent = new Intent(context, DeadlineReceiver.class)
+                .setAction(DeadlineReceiver.ACTION_DAILY_DIGEST);
+        BridgeAuth.attach(context, intent);
+        return PendingIntent.getBroadcast(context, "daily_digest".hashCode(), intent,
+                flags | PendingIntent.FLAG_IMMUTABLE);
+    }
+
+    /** Fire today's digest, then schedule tomorrow's. */
+    public static void sendDailyDigest(Context context) {
+        try {
+            if (AppSettings.dailyDigestEnabled(context)) {
+                sendDigestNow(context);
+            }
+        } catch (Throwable throwable) {
+            Log.w("ChaoxingDeadline", "daily digest failed: " + throwable);
+        } finally {
+            scheduleNextDigest(context);
+        }
+    }
+
+    private static void sendDigestNow(Context context) {
+        if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.TIRAMISU
+                && context.checkSelfPermission(Manifest.permission.POST_NOTIFICATIONS) != PackageManager.PERMISSION_GRANTED) {
+            return;
+        }
+        ensureChannel(context);
+        List<DeadlineItem> items = new DeadlineStore(context).activeItems();
+        long now = System.currentTimeMillis();
+        Calendar endOfDay = Calendar.getInstance();
+        endOfDay.set(Calendar.HOUR_OF_DAY, 23);
+        endOfDay.set(Calendar.MINUTE, 59);
+        endOfDay.set(Calendar.SECOND, 59);
+        endOfDay.set(Calendar.MILLISECOND, 999);
+        long threeDays = now + TimeUnit.DAYS.toMillis(3);
+        List<DeadlineItem> today = new ArrayList<>();
+        List<DeadlineItem> soon = new ArrayList<>();
+        for (DeadlineItem item : items) {
+            if (item == null || item.submitted || item.dueAt <= now) {
+                continue;
+            }
+            if (!AppSettings.shouldNotifyType(context, item.type)) {
+                continue;
+            }
+            if (item.dueAt <= endOfDay.getTimeInMillis()) {
+                today.add(item);
+            } else if (item.dueAt <= threeDays) {
+                soon.add(item);
+            }
+        }
+        if (today.isEmpty() && soon.isEmpty()) {
+            return;
+        }
+        StringBuilder big = new StringBuilder();
+        if (today.isEmpty()) {
+            big.append("今天没有截止的待办。");
+        } else {
+            int shown = Math.min(today.size(), 6);
+            for (int i = 0; i < shown; i++) {
+                DeadlineItem item = today.get(i);
+                big.append(String.format(java.util.Locale.CHINA, "%tR", item.dueAt))
+                        .append(" 截止 · ").append(item.title == null ? "" : item.title);
+                if (item.course != null && !item.course.isEmpty()) {
+                    big.append("（").append(item.course).append("）");
+                }
+                big.append('\n');
+            }
+            if (today.size() > shown) {
+                big.append("…等 ").append(today.size()).append(" 项\n");
+            }
+        }
+        if (!soon.isEmpty()) {
+            big.append("未来 3 天还有 ").append(soon.size()).append(" 项：\n");
+            int shown = Math.min(soon.size(), 3);
+            for (int i = 0; i < shown; i++) {
+                DeadlineItem item = soon.get(i);
+                big.append(DateText.deadlineTime(item.dueAt)).append(" · ")
+                        .append(item.title == null ? "" : item.title).append('\n');
+            }
+            if (soon.size() > shown) {
+                big.append("…等 ").append(soon.size()).append(" 项\n");
+            }
+        }
+        String summary = today.isEmpty()
+                ? "未来 3 天有 " + soon.size() + " 项截止"
+                : "今天 " + today.size() + " 项截止，3 天内共 " + (today.size() + soon.size()) + " 项";
+        Intent launch = new Intent(context, MainActivity.class)
+                .setFlags(Intent.FLAG_ACTIVITY_NEW_TASK | Intent.FLAG_ACTIVITY_CLEAR_TOP);
+        PendingIntent contentIntent = PendingIntent.getActivity(context,
+                "daily_digest_ui".hashCode(), launch,
+                PendingIntent.FLAG_UPDATE_CURRENT | PendingIntent.FLAG_IMMUTABLE);
+        android.app.Notification.Builder builder = new android.app.Notification.Builder(context, CHANNEL_DIGEST)
+                .setSmallIcon(R.drawable.ic_notification)
+                .setContentTitle("待办摘要")
+                .setContentText(summary)
+                .setStyle(new android.app.Notification.BigTextStyle().bigText(big.toString().trim()))
+                .setContentIntent(contentIntent)
+                .setAutoCancel(true);
+        NotificationManager manager = (NotificationManager) context.getSystemService(Context.NOTIFICATION_SERVICE);
+        if (manager != null) {
+            manager.notify("daily_digest".hashCode(), builder.build());
+        }
     }
 
     public static void cancelScheduledAlarms(Context context) {

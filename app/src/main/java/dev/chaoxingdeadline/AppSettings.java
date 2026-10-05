@@ -231,6 +231,27 @@ public final class AppSettings {
         return shifted;
     }
 
+    // -- daily digest --
+
+    public static boolean dailyDigestEnabled(Context context) {
+        return prefs(context).getBoolean("daily_digest_enabled", true);
+    }
+
+    public static void setDailyDigestEnabled(Context context, boolean enabled) {
+        prefs(context).edit().putBoolean("daily_digest_enabled", enabled).apply();
+        DeadlineNotifier.scheduleNextDigest(context);
+    }
+
+    /** Digest delivery time, in minutes from midnight (default 08:00). */
+    public static int digestMinuteOfDay(Context context) {
+        return normalizeMinute(prefs(context).getInt("daily_digest_minute", 8 * 60));
+    }
+
+    public static void setDigestMinuteOfDay(Context context, int minute) {
+        prefs(context).edit().putInt("daily_digest_minute", normalizeMinute(minute)).apply();
+        DeadlineNotifier.scheduleNextDigest(context);
+    }
+
     // -- widget configuration --
 
     public static boolean widgetShowCourse(Context context) {
