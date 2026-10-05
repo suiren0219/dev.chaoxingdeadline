@@ -24,6 +24,7 @@ public final class DeadlineReceiver extends BroadcastReceiver {
     public static final String ACTION_COURSE_SCAN_PERF = "dev.chaoxingdeadline.COURSE_SCAN_PERF";
     public static final String ACTION_SETTINGS_UPDATE = "dev.chaoxingdeadline.SETTINGS_UPDATE";
     public static final String ACTION_WIDGET_REFRESH = "dev.chaoxingdeadline.WIDGET_REFRESH";
+    public static final String ACTION_DAILY_DIGEST = "dev.chaoxingdeadline.DAILY_DIGEST";
     public static final String EXTRA_ITEM_B64 = "item_b64";
     public static final String EXTRA_STATUS = "status";
     public static final String EXTRA_SOURCE = "source";
@@ -58,10 +59,15 @@ public final class DeadlineReceiver extends BroadcastReceiver {
     private static void handle(Context context, Intent intent) {
         if (Intent.ACTION_BOOT_COMPLETED.equals(intent.getAction())) {
             DeadlineNotifier.rescheduleAll(context);
+            DeadlineNotifier.scheduleNextDigest(context);
             DeadlineWidgetProvider.updateAll(context);
             return;
         }
         if (!BridgeAuth.isValid(context, intent)) {
+            return;
+        }
+        if (ACTION_DAILY_DIGEST.equals(intent.getAction())) {
+            DeadlineNotifier.sendDailyDigest(context);
             return;
         }
         if (ACTION_STATUS.equals(intent.getAction())) {

@@ -141,6 +141,20 @@ public final class SettingsActivity extends BaseActivity {
         }
         content.addView(quietGroup, groupParams());
 
+        // -- 每日摘要（本 fork 新增）--
+        content.addView(sectionHeader("每日摘要 · 本 fork 新增"));
+        LinearLayout digestGroup = card();
+        digestGroup.addView(switchRow("每日摘要", "每天定时推送一条汇总：今天和未来 3 天要截止什么",
+                AppSettings.dailyDigestEnabled(this),
+                (b, c) -> { AppSettings.setDailyDigestEnabled(this, c); recreate(); }));
+        if (AppSettings.dailyDigestEnabled(this)) {
+            digestGroup.addView(divider());
+            View digestTime = innerActionRow("推送时间", "每天 " + digestClockLabel() + "；点击修改");
+            digestTime.setOnClickListener(v -> pickDigestTime());
+            digestGroup.addView(digestTime);
+        }
+        content.addView(digestGroup, groupParams());
+
         // -- 小组件（本 fork 新增）--
         content.addView(sectionHeader("小组件 · 本 fork 新增"));
         LinearLayout widgetGroup = card();
@@ -168,7 +182,11 @@ public final class SettingsActivity extends BaseActivity {
 
         // -- 关于 --
         content.addView(sectionHeader("其他"));
-        View about = actionRow("关于", "当前版本 " + versionSubtitle() + " · 版本信息与开源许可");
+        View update = actionRow("获取更新",
+                "当前 " + versionSubtitle() + "（" + signatureLabel() + "）；点按打开最新版下载页");
+        update.setOnClickListener(v -> openLatestRelease());
+        content.addView(update, groupParams());
+        View about = actionRow("关于", "版本信息与开源许可");
         about.setOnClickListener(v -> startActivity(new Intent(this, AboutActivity.class)));
         content.addView(about, groupParams());
 
@@ -231,6 +249,35 @@ public final class SettingsActivity extends BaseActivity {
         } catch (Throwable ignored) {
             return "未知";
         }
+    }
+
+    /** debug / release 签名互不兼容；标出来避免用户下载到不能覆盖安装的包。 */
+    private String signatureLabel() {
+        boolean debuggable = (getApplicationInfo().flags
+                & android.content.pm.ApplicationInfo.FLAG_DEBUGGABLE) != 0;
+        return debuggable ? "debug 签名" : "release 签名";
+    }
+
+    private void openLatestRelease() {
+        try {
+            startActivity(new Intent(Intent.ACTION_VIEW,
+                    Uri.parse("https://github.com/suiren0219/dev.chaoxingdeadline/releases/latest")));
+        } catch (Throwable throwable) {
+            Toast.makeText(this, "未找到可用的浏览器", Toast.LENGTH_SHORT).show();
+        }
+    }
+
+    private String digestClockLabel() {
+        int minute = AppSettings.digestMinuteOfDay(this);
+        return String.format(java.util.Locale.CHINA, "%02d:%02d", minute / 60, minute % 60);
+    }
+
+    private void pickDigestTime() {
+        int minute = AppSettings.digestMinuteOfDay(this);
+        new TimePickerDialog(this, (view, hourOfDay, minuteOfHour) -> {
+            AppSettings.setDigestMinuteOfDay(this, hourOfDay * 60 + minuteOfHour);
+            recreate();
+        }, minute / 60, minute % 60, true).show();
     }
 
     private void openChaoxing() {
