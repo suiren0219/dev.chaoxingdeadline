@@ -21,13 +21,12 @@ jobs:
           distribution: temurin
           java-version: '21'
 
-      - name: Set up Android SDK
-        uses: android-actions/setup-android@v3
-
       - name: Install SDK packages
         run: |
-          yes | sdkmanager --licenses > /dev/null || true
-          sdkmanager --install "platform-tools" "platforms;android-36" "build-tools;36.0.0"
+          SDKMANAGER="$ANDROID_HOME/cmdline-tools/latest/bin/sdkmanager"
+          [ -x "$SDKMANAGER" ] || SDKMANAGER="$(command -v sdkmanager)"
+          yes | "$SDKMANAGER" --licenses > /dev/null || true
+          "$SDKMANAGER" --install "platform-tools" "platforms;android-36" "build-tools;36.0.0"
 
       - name: Restore signing key
         env:
@@ -62,6 +61,8 @@ jobs:
           ls -l out
 
       - name: Publish release
+        # Tag pushes publish; workflow_dispatch is a build-only dry run.
+        if: startsWith(github.ref, 'refs/tags/')
         uses: softprops/action-gh-release@v2
         with:
           files: out/*.apk
