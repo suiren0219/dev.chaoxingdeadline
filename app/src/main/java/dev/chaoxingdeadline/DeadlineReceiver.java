@@ -23,6 +23,7 @@ public final class DeadlineReceiver extends BroadcastReceiver {
     public static final String ACTION_COURSE_SCAN_BATCH = "dev.chaoxingdeadline.COURSE_SCAN_BATCH";
     public static final String ACTION_COURSE_SCAN_PERF = "dev.chaoxingdeadline.COURSE_SCAN_PERF";
     public static final String ACTION_SETTINGS_UPDATE = "dev.chaoxingdeadline.SETTINGS_UPDATE";
+    public static final String ACTION_WIDGET_REFRESH = "dev.chaoxingdeadline.WIDGET_REFRESH";
     public static final String EXTRA_ITEM_B64 = "item_b64";
     public static final String EXTRA_STATUS = "status";
     public static final String EXTRA_SOURCE = "source";
@@ -83,7 +84,7 @@ public final class DeadlineReceiver extends BroadcastReceiver {
         if (ACTION_NOTIFY.equals(intent.getAction())) {
             DeadlineNotifier.notifyDue(context,
                     intent.getStringExtra(DeadlineNotifier.EXTRA_DEADLINE_ID),
-                    intent.getLongExtra(DeadlineNotifier.EXTRA_OFFSET_MILLIS, 0L));
+                    intent.getLongExtra(DeadlineNotifier.EXTRA_OFFSET_MILLIS, DeadlineNotifier.NO_OFFSET));
             OverlayBridge.publish(context);
             DeadlineWidgetProvider.updateAll(context);
             return;
@@ -138,20 +139,16 @@ public final class DeadlineReceiver extends BroadcastReceiver {
             return;
         }
         if (ACTION_SETTINGS_UPDATE.equals(intent.getAction())) {
-            if (intent.hasExtra("overlay_enabled")) {
-                AppSettings.setOverlayEnabled(context, intent.getBooleanExtra("overlay_enabled", true));
-            }
-            if (intent.hasExtra("overlay_window_hours")) {
-                AppSettings.setOverlayWindowHours(context,
-                        intent.getIntExtra("overlay_window_hours", AppSettings.OVERLAY_WINDOW_ALL));
-            }
-            if (intent.hasExtra("dark_mode_force")) {
-                AppSettings.setDarkModeForceEnabled(context,
-                        intent.getBooleanExtra("dark_mode_force", true));
-            }
+            // Generic pass-through: any extra whose key is a known setting is written by
+            // type, so new toggles do not need another branch here.
+            AppSettings.applyRemoteUpdate(context, intent);
             OverlayBridge.publish(context);
             DeadlineWidgetProvider.updateAll(context);
             context.sendBroadcast(new Intent(ACTION_REFRESH).setPackage(context.getPackageName()));
+            return;
+        }
+        if (ACTION_WIDGET_REFRESH.equals(intent.getAction())) {
+            DeadlineWidgetProvider.updateAll(context);
             return;
         }
         if (!ACTION_ITEM.equals(intent.getAction())) {

@@ -81,6 +81,14 @@ public final class UiTheme {
         return dark(context) ? Color.argb(35, 236, 134, 72) : Color.argb(20, 214, 94, 34);
     }
 
+    public static int badgeChapter(Context context) {
+        return dark(context) ? Color.rgb(79, 209, 197) : Color.rgb(14, 159, 142);
+    }
+
+    public static int badgeChapterBg(Context context) {
+        return dark(context) ? Color.argb(35, 79, 209, 197) : Color.argb(20, 14, 159, 142);
+    }
+
     // -- drawable builders --
     public static GradientDrawable rounded(Context context, int color) {
         return rounded(context, color, dp(context, 8));

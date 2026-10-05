@@ -74,12 +74,17 @@ public final class CourseBlockActivity extends BaseActivity {
     private View courseCard(String course) {
         LinearLayout card = card();
         card.addView(baseRow("", course, ""));
-        LinearLayout checks = new LinearLayout(this);
-        checks.setGravity(Gravity.CENTER_VERTICAL);
-        checks.setPadding(dp(20), dp(4), dp(18), dp(16));
-        addTypeCheck(checks, course, "作业");
-        addTypeCheck(checks, course, "考试");
-        card.addView(checks, new LinearLayout.LayoutParams(-1, -2));
+        String[] types = DeadlineStore.managedTypes();
+        LinearLayout checks = null;
+        for (int i = 0; i < types.length; i++) {
+            if (i % 2 == 0) {
+                checks = new LinearLayout(this);
+                checks.setGravity(Gravity.CENTER_VERTICAL);
+                checks.setPadding(dp(20), dp(4), dp(18), i + 2 >= types.length ? dp(16) : dp(6));
+                card.addView(checks, new LinearLayout.LayoutParams(-1, -2));
+            }
+            addTypeCheck(checks, course, types[i]);
+        }
         return card;
     }
 

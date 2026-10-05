@@ -9,6 +9,7 @@ import android.os.Build;
 import android.os.Bundle;
 import android.provider.Settings;
 import android.text.InputType;
+import android.app.TimePickerDialog;
 import android.view.Gravity;
 import android.view.View;
 import android.widget.CompoundButton;
@@ -99,6 +100,15 @@ public final class SettingsActivity extends BaseActivity {
         group2.addView(switchRow("考试提醒", "考试到达设定的提醒时间提醒", AppSettings.notifyExam(this),
                 (b, c) -> { AppSettings.prefs(this).edit().putBoolean("notify_exam", c).apply(); DeadlineNotifier.rescheduleUpcomingOnly(this); }));
         group2.addView(divider());
+        group2.addView(switchRow("章节任务提醒", "章节任务点的截止时间提醒，可能产生较多通知", AppSettings.notifyChapter(this),
+                (b, c) -> { AppSettings.prefs(this).edit().putBoolean("notify_chapter", c).apply(); DeadlineNotifier.rescheduleUpcomingOnly(this); }));
+        group2.addView(divider());
+        group2.addView(switchRow("截止时提醒", "到达截止时间的那一刻再提醒一次", AppSettings.notifyAtDue(this),
+                (b, c) -> { AppSettings.prefs(this).edit().putBoolean("notify_at_due", c).apply(); DeadlineNotifier.rescheduleUpcomingOnly(this); }));
+        group2.addView(divider());
+        group2.addView(switchRow("紧急提醒渠道", "30 分钟内或已到截止时，使用独立的「即将截止」通知渠道（可单独设置铃声与免打扰）", AppSettings.urgentChannelEnabled(this),
+                (b, c) -> { AppSettings.prefs(this).edit().putBoolean("urgent_channel", c).apply(); }));
+        group2.addView(divider());
         group2.addView(hourRow());
         group2.addView(divider());
         View exactAlarm = innerActionRow("精确闹钟权限", exactAlarmSubtitle());
@@ -110,11 +120,51 @@ public final class SettingsActivity extends BaseActivity {
         group2.addView(testNotification);
         content.addView(group2, groupParams());
 
-        // -- 管理（原作者功能）--
-        content.addView(sectionHeader("管理 · 原作者功能"));
-        View course = actionRow("课程管理", "手动选择哪些课程的作业和考试需要显示");
+        // -- 免打扰（本 fork 新增）--
+        content.addView(sectionHeader("免打扰 · 本 fork 新增"));
+        LinearLayout quietGroup = card();
+        quietGroup.addView(switchRow("免打扰时段", "时段内的提醒不发声、不弹窗，仍会保留在通知栏",
+                AppSettings.quietHoursEnabled(this),
+                (b, c) -> { AppSettings.setQuietHoursEnabled(this, c); recreate(); }));
+        if (AppSettings.quietHoursEnabled(this)) {
+            quietGroup.addView(divider());
+            View quietTime = innerActionRow("时段", "当前 " + quietRangeLabel());
+            quietTime.setOnClickListener(v -> pickQuietHours());
+            quietGroup.addView(quietTime);
+            quietGroup.addView(divider());
+            quietGroup.addView(switchRow("顺延到时段结束", "原本落在时段内的提醒，改为时段结束后第一时间发出",
+                    AppSettings.quietDeferEnabled(this),
+                    (b, c) -> {
+                        AppSettings.prefs(this).edit().putBoolean("quiet_defer", c).apply();
+                        DeadlineNotifier.rescheduleAll(this);
+                    }));
+        }
+        content.addView(quietGroup, groupParams());
+
+        // -- 小组件（本 fork 新增）--
+        content.addView(sectionHeader("小组件 · 本 fork 新增"));
+        LinearLayout widgetGroup = card();
+        widgetGroup.addView(switchRow("显示课程名", "关闭后小组件只显示标题和剩余时间",
+                AppSettings.widgetShowCourse(this),
+                (b, c) -> { AppSettings.setWidgetShowCourse(this, c); DeadlineWidgetProvider.updateAll(this); }));
+        widgetGroup.addView(divider());
+        View widgetWindow = innerActionRow("显示范围", "当前：" + AppSettings.overlayWindowLabel(
+                AppSettings.widgetWindowHours(this)));
+        widgetWindow.setOnClickListener(v -> showWidgetWindowDialog());
+        widgetGroup.addView(widgetWindow);
+        content.addView(widgetGroup, groupParams());
+
+        // -- 管理 --
+        content.addView(sectionHeader("管理"));
+        LinearLayout manageGroup = card();
+        View course = innerActionRow("课程管理", "手动选择哪些课程的作业、考试和章节任务需要显示");
         course.setOnClickListener(v -> startActivity(new Intent(this, CourseBlockActivity.class)));
-        content.addView(course, groupParams());
+        manageGroup.addView(course);
+        manageGroup.addView(divider());
+        View backup = innerActionRow("备份与导出", "导出 JSON 备份或 ICS 日历，也可从备份恢复");
+        backup.setOnClickListener(v -> startActivity(new Intent(this, BackupActivity.class)));
+        manageGroup.addView(backup);
+        content.addView(manageGroup, groupParams());
 
         // -- 关于 --
         content.addView(sectionHeader("其他"));
@@ -123,6 +173,54 @@ public final class SettingsActivity extends BaseActivity {
         content.addView(about, groupParams());
 
         return root;
+    }
+
+    private String quietRangeLabel() {
+        return minuteLabel(AppSettings.quietStartMinute(this))
+                + " — " + minuteLabel(AppSettings.quietEndMinute(this))
+                + (AppSettings.quietSpansMidnight(this) ? "（跨天）" : "");
+    }
+
+    private static String minuteLabel(int minuteOfDay) {
+        return String.format(java.util.Locale.CHINA, "%02d:%02d",
+                minuteOfDay / 60, minuteOfDay % 60);
+    }
+
+    /** Two-step picker: start time first, then end time. */
+    private void pickQuietHours() {
+        int start = AppSettings.quietStartMinute(this);
+        new TimePickerDialog(this, (view, hourOfDay, minute) -> {
+            int startMinute = hourOfDay * 60 + minute;
+            int end = AppSettings.quietEndMinute(this);
+            new TimePickerDialog(this, (endView, endHour, endMinute) -> {
+                AppSettings.setQuietHours(this, startMinute, endHour * 60 + endMinute);
+                DeadlineNotifier.rescheduleAll(this);
+                recreate();
+            }, end / 60, end % 60, true).show();
+        }, start / 60, start % 60, true).show();
+    }
+
+    private void showWidgetWindowDialog() {
+        int[] values = AppSettings.overlayWindowOptions();
+        String[] labels = new String[values.length];
+        int current = AppSettings.widgetWindowHours(this);
+        int checked = 0;
+        for (int i = 0; i < values.length; i++) {
+            labels[i] = AppSettings.overlayWindowLabel(values[i]);
+            if (values[i] == current) {
+                checked = i;
+            }
+        }
+        new AlertDialog.Builder(this)
+                .setTitle("小组件显示范围")
+                .setSingleChoiceItems(labels, checked, (dialog, which) -> {
+                    AppSettings.setWidgetWindowHours(this, values[which]);
+                    DeadlineWidgetProvider.updateAll(this);
+                    dialog.dismiss();
+                    recreate();
+                })
+                .setNegativeButton("取消", null)
+                .show();
     }
 
     private String versionSubtitle() {

@@ -45,6 +45,30 @@
         <activity
             android:name=".AboutActivity"
             android:exported="false" />
+        <activity
+            android:name=".BackupActivity"
+            android:exported="false" />
+        <!-- Exported intentionally: the launcher starts this as the AppWidget configure
+             activity. It only reads the widget id and writes module-local preferences. -->
+        <activity
+            android:name=".DeadlineWidgetConfigActivity"
+            android:exported="true"
+            android:label="@string/app_name"
+            android:theme="@style/AppTheme">
+            <intent-filter>
+                <action android:name="android.appwidget.action.APPWIDGET_CONFIGURE" />
+            </intent-filter>
+        </activity>
+        <service
+            android:name=".DeadlineTileService"
+            android:exported="true"
+            android:icon="@drawable/ic_notification"
+            android:label="@string/tile_label"
+            android:permission="android.permission.BIND_QUICK_SETTINGS_TILE">
+            <intent-filter>
+                <action android:name="android.service.quicksettings.action.QS_TILE" />
+            </intent-filter>
+        </service>
         <!-- Exported intentionally: the hook runs inside Chaoxing's process and sends explicit
              broadcasts back to this module. DeadlineReceiver validates every non-system action
              with BridgeAuth before accepting data. -->
@@ -61,7 +85,8 @@
         <receiver
             android:name=".DeadlineWidgetCompact"
             android:exported="false"
-            android:label="@string/widget_compact_name">
+            android:label="@string/widget_compact_name"
+            android:configure="dev.chaoxingdeadline.DeadlineWidgetConfigActivity">
             <intent-filter>
                 <action android:name="android.appwidget.action.APPWIDGET_UPDATE" />
             </intent-filter>
@@ -72,7 +97,8 @@
         <receiver
             android:name=".DeadlineWidgetList"
             android:exported="false"
-            android:label="@string/widget_list_name">
+            android:label="@string/widget_list_name"
+            android:configure="dev.chaoxingdeadline.DeadlineWidgetConfigActivity">
             <intent-filter>
                 <action android:name="android.appwidget.action.APPWIDGET_UPDATE" />
             </intent-filter>

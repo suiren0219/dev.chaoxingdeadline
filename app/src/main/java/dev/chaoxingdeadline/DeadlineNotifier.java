@@ -18,11 +18,19 @@ import java.util.Set;
 import java.util.concurrent.TimeUnit;
 
 public final class DeadlineNotifier {
-    private static final String CHANNEL_ID = "deadline_alerts";
+    /** Advance reminders: visible and audible, but not heads-up. */
+    public static final String CHANNEL_ID = "deadline_alerts";
+    /** Final call: the item is due within 30 minutes or right now. */
+    public static final String CHANNEL_URGENT = "deadline_urgent";
+    /** Quiet hours: delivered silently so nothing is dropped while you sleep. */
+    public static final String CHANNEL_QUIET = "deadline_quiet";
+
     private static final String PREFS = "deadline_notify";
     private static final String KEY_ALARMS = "scheduled_alarms";
     public static final String EXTRA_DEADLINE_ID = "deadline_id";
     public static final String EXTRA_OFFSET_MILLIS = "offset_millis";
+    /** Sentinel for "no offset supplied": 0 ms is a real offset (the due-time reminder). */
+    public static final long NO_OFFSET = -1L;
 
     private static final long SOON_OFFSET = TimeUnit.HOURS.toMillis(3);
     private static final long URGENT_OFFSET = TimeUnit.MINUTES.toMillis(30);
@@ -35,11 +43,21 @@ public final class DeadlineNotifier {
         if (manager == null) {
             return;
         }
-        NotificationChannel channel = new NotificationChannel(
-                CHANNEL_ID,
-                "\u622a\u6b62\u63d0\u9192",
+        createChannel(manager, CHANNEL_ID, "\u622a\u6b62\u63d0\u9192",
+                "\u5b66\u4e60\u901a\u4f5c\u4e1a\u3001\u8003\u8bd5\u548c\u7ae0\u8282\u4efb\u52a1\u7684\u63d0\u524d\u63d0\u9192",
+                NotificationManager.IMPORTANCE_DEFAULT);
+        createChannel(manager, CHANNEL_URGENT, "\u5373\u5c06\u622a\u6b62",
+                "\u5269\u4f5930\u5206\u949f\u5185\u622a\u6b62\u6216\u5df2\u5230\u622a\u6b62\u65f6\u95f4\u7684\u7d27\u6025\u63d0\u9192",
                 NotificationManager.IMPORTANCE_HIGH);
-        channel.setDescription("\u5b66\u4e60\u901a\u4f5c\u4e1a\u548c\u8003\u8bd5\u622a\u6b62\u63d0\u9192");
+        createChannel(manager, CHANNEL_QUIET, "\u514d\u6253\u6270\u63d0\u9192",
+                "\u514d\u6253\u6270\u65f6\u6bb5\u5185\u4ea7\u751f\u7684\u63d0\u9192\uff0c\u4e0d\u4f1a\u53d1\u58f0\u6216\u5f39\u51fa",
+                NotificationManager.IMPORTANCE_LOW);
+    }
+
+    private static void createChannel(NotificationManager manager, String id,
+                                      String name, String description, int importance) {
+        NotificationChannel channel = new NotificationChannel(id, name, importance);
+        channel.setDescription(description);
         manager.createNotificationChannel(channel);
     }
 
@@ -62,7 +80,7 @@ public final class DeadlineNotifier {
         }
         DeadlineItem item = new DeadlineStore(context).itemById(id);
         if (item != null) {
-            long offset = offsetMillis > 0L ? offsetMillis : AppSettings.notifyOffsetsMillis(context)[0];
+            long offset = offsetMillis >= 0L ? offsetMillis : AppSettings.notifyOffsetsMillis(context)[0];
             notifyNow(context, item, offset, false);
         }
         rescheduleAll(context);
@@ -104,17 +122,31 @@ public final class DeadlineNotifier {
         long[] offsets = AppSettings.notifyOffsetsMillis(context);
         HashSet<String> scheduled = new HashSet<>();
         for (DeadlineItem item : items) {
-            if (!canNotify(context, item, now)) {
+            boolean notifiable = canNotify(context, item, now);
+            if (!notifiable && !dueTimeReminderStillPending(context, item, offsets, now)) {
+                continue;
+            }
+            if (!notifiable) {
+                // Past its deadline, but the due-time reminder deferred out of quiet hours
+                // is still pending: keep exactly that alarm alive across reschedules.
+                String dueKey = alarmKey(item, 0L);
+                long dueTrigger = shiftForQuietHours(context, item.dueAt);
+                if (dueTrigger > now) {
+                    scheduleAlarm(context, dueKey, dueTrigger);
+                    scheduled.add(dueKey);
+                }
                 continue;
             }
             // offsets arrive longest-first; catch up with the *closest* missed window so a
             // freshly captured item due in 20 minutes reports 提前 30 分钟, not 提前 24 小时.
-            long catchUpOffset = 0L;
+            // Future-vs-past is judged on the quiet-shifted trigger: a reminder deferred
+            // past its original moment is still pending and must survive any reschedule.
+            long catchUpOffset = NO_OFFSET;
             for (long offset : offsets) {
-                long triggerAt = item.dueAt - offset;
+                long triggerAt = shiftForQuietHours(context, item.dueAt - offset);
                 if (triggerAt <= now) {
                     if (allowCatchUp && shouldCatchUp(item, offset, now)
-                            && (catchUpOffset == 0L || offset < catchUpOffset)) {
+                            && (catchUpOffset == NO_OFFSET || offset < catchUpOffset)) {
                         catchUpOffset = offset;
                     }
                     continue;
@@ -123,11 +155,38 @@ public final class DeadlineNotifier {
                 scheduleAlarm(context, key, triggerAt);
                 scheduled.add(key);
             }
-            if (catchUpOffset > 0L) {
+            if (catchUpOffset != NO_OFFSET) {
                 notifyNow(context, item, catchUpOffset, true);
             }
         }
         prefs(context).edit().putStringSet(KEY_ALARMS, scheduled).apply();
+    }
+
+    /**
+     * A due-time reminder deferred out of quiet hours can still lie in the future after the
+     * deadline itself has passed; such items must keep that alarm across reschedules
+     * instead of being dropped by the canNotify gate.
+     */
+    private static boolean dueTimeReminderStillPending(
+            Context context, DeadlineItem item, long[] offsets, long now) {
+        if (item.submitted || item.dueAt > now) {
+            return false;
+        }
+        boolean dueTimeEnabled = false;
+        for (long offset : offsets) {
+            if (offset == 0L) {
+                dueTimeEnabled = true;
+                break;
+            }
+        }
+        return dueTimeEnabled
+                && AppSettings.shouldNotifyType(context, item.type)
+                && shiftForQuietHours(context, item.dueAt) > now;
+    }
+
+    /** Reminders falling inside the quiet window are pushed to the moment it ends. */
+    private static long shiftForQuietHours(Context context, long triggerAt) {
+        return AppSettings.shiftOutOfQuietHours(context, triggerAt);
     }
 
     public static void cancelScheduledAlarms(Context context) {
@@ -195,12 +254,17 @@ public final class DeadlineNotifier {
 
     private static boolean shouldCatchUp(DeadlineItem item, long offset, long now) {
         long delta = item.dueAt - now;
-        if (delta <= 0L || delta > offset) {
+        if (delta <= 0L) {
+            return false;
+        }
+        // offset == 0 means "due right now": its window is the instant of the deadline, so
+        // there is nothing meaningful to catch up once it has passed.
+        if (offset <= 0L) {
             return false;
         }
         // The reminder window for this offset has started but its trigger time already
         // passed, so it counts as missed and is eligible for exactly one catch-up send.
-        return true;
+        return delta <= offset;
     }
 
     private static void notifyBestMissedReminder(Context context, DeadlineItem item) {
@@ -208,16 +272,16 @@ public final class DeadlineNotifier {
         if (!canNotify(context, item, now)) {
             return;
         }
-        long bestOffset = 0L;
+        long bestOffset = NO_OFFSET;
         for (long offset : AppSettings.notifyOffsetsMillis(context)) {
             if (item.dueAt - offset > now || !shouldCatchUp(item, offset, now)) {
                 continue;
             }
-            if (bestOffset == 0L || offset < bestOffset) {
+            if (bestOffset == NO_OFFSET || offset < bestOffset) {
                 bestOffset = offset;
             }
         }
-        if (bestOffset > 0L) {
+        if (bestOffset != NO_OFFSET) {
             notifyNow(context, item, bestOffset, true);
         }
     }
@@ -260,7 +324,7 @@ public final class DeadlineNotifier {
         }
         ensureChannel(context);
         PendingIntent contentIntent = openModuleIntent(context, item);
-        android.app.Notification.Builder builder = new android.app.Notification.Builder(context, CHANNEL_ID)
+        android.app.Notification.Builder builder = new android.app.Notification.Builder(context, channelFor(context, item, offsetMillis))
                 .setSmallIcon(R.drawable.ic_notification)
                 .setContentTitle(item.type + "\u5feb\u622a\u6b62\u4e86")
                 .setContentText(notificationLine(item, offsetMillis, catchUp))
@@ -278,6 +342,20 @@ public final class DeadlineNotifier {
             manager.notify(notificationId(item), builder.build());
             prefs.edit().putBoolean(key, true).apply();
         }
+    }
+
+    /** Urgent (<= 30 min left or due now) gets heads-up; quiet hours downgrade everything. */
+    private static String channelFor(Context context, DeadlineItem item, long offsetMillis) {
+        if (AppSettings.quietHoursEnabled(context)
+                && AppSettings.inQuietWindow(context, System.currentTimeMillis())) {
+            return CHANNEL_QUIET;
+        }
+        long remaining = (item == null ? Long.MAX_VALUE : item.dueAt) - System.currentTimeMillis();
+        boolean urgent = offsetMillis <= 0L || remaining <= URGENT_OFFSET;
+        if (AppSettings.urgentChannelEnabled(context) && urgent) {
+            return CHANNEL_URGENT;
+        }
+        return CHANNEL_ID;
     }
 
     private static android.app.Notification.Action notificationAction(
@@ -362,6 +440,9 @@ public final class DeadlineNotifier {
     }
 
     private static String reminderLabel(long offsetMillis) {
+        if (offsetMillis <= 0L) {
+            return "\u73b0\u5728\u622a\u6b62";
+        }
         if (offsetMillis >= TimeUnit.HOURS.toMillis(1)) {
             long hours = offsetMillis / TimeUnit.HOURS.toMillis(1);
             return "\u63d0\u524d " + hours + " \u5c0f\u65f6";
@@ -421,16 +502,16 @@ public final class DeadlineNotifier {
 
     private static long offsetFromAlarmKey(String key) {
         if (key == null) {
-            return 0L;
+            return NO_OFFSET;
         }
         int last = key.lastIndexOf('|');
         if (last < 0 || last + 1 >= key.length()) {
-            return 0L;
+            return NO_OFFSET;
         }
         try {
             return Long.parseLong(key.substring(last + 1));
         } catch (Throwable ignored) {
-            return 0L;
+            return NO_OFFSET;
         }
     }
 

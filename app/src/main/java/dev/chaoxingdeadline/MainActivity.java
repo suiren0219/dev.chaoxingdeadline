@@ -8,6 +8,7 @@ import android.content.Intent;
 import android.content.IntentFilter;
 import android.content.SharedPreferences;
 import android.content.pm.PackageManager;
+import android.widget.Toast;
 import android.os.Build;
 import android.os.Bundle;
 import android.os.Handler;
@@ -121,6 +122,9 @@ public final class MainActivity extends BaseActivity implements App.ServiceListe
         LinearLayout header = hbox();
         TextView title = text("学习通截止提醒", 26, true, UiTheme.text(this));
         header.addView(title, new LinearLayout.LayoutParams(0, dp(48), 1f));
+        TextView addBtn = icon("＋", 26, UiTheme.accent(this));
+        addBtn.setOnClickListener(v -> ManualDeadlineDialog.show(this, () -> reload(false)));
+        header.addView(addBtn, new LinearLayout.LayoutParams(dp(42), dp(48)));
         TextView settingsBtn = icon("⚙", 26, UiTheme.accent(this));
         settingsBtn.setOnClickListener(v -> startActivity(new Intent(this, SettingsActivity.class)));
         header.addView(settingsBtn, new LinearLayout.LayoutParams(dp(42), dp(48)));
@@ -274,11 +278,11 @@ public final class MainActivity extends BaseActivity implements App.ServiceListe
         card.setAlpha(done ? 0.55f : 1f);
 
         TextView badge = new TextView(this);
-        badge.setText("作业".equals(item.type) ? "作" : "考");
+        badge.setText(badgeLabel(item.type));
         badge.setTextSize(13);
         badge.setGravity(Gravity.CENTER);
-        int badgeColor = "作业".equals(item.type) ? UiTheme.badgeHomework(this) : UiTheme.badgeExam(this);
-        int badgeBg = "作业".equals(item.type) ? UiTheme.badgeHomeworkBg(this) : UiTheme.badgeExamBg(this);
+        int badgeColor = badgeColor(this, item.type);
+        int badgeBg = badgeBg(this, item.type);
         badge.setTextColor(badgeColor);
         badge.setBackground(UiTheme.fillOnly(this, badgeBg, dp(10)));
         LinearLayout.LayoutParams bp = new LinearLayout.LayoutParams(dp(36), dp(36));
@@ -315,15 +319,89 @@ public final class MainActivity extends BaseActivity implements App.ServiceListe
             card.addView(doneLabel, new LinearLayout.LayoutParams(-2, -2));
         }
 
+        card.setOnClickListener(v -> showItemMenu(item));
+
         swipeWrapper.addView(card, new LinearLayout.LayoutParams(-1, -2));
 
-        // swipe-to-delete for terminal items
+        // swipe-to-delete for terminal items; a tap still opens the item menu
         if (done) {
             card.setTag("swipeable");
             card.setOnTouchListener(new SwipeDismissListener(item, swipeWrapper, card));
         }
 
         return swipeWrapper;
+    }
+
+    private static String badgeLabel(String type) {
+        if ("\u4f5c\u4e1a".equals(type)) {
+            return "\u4f5c";
+        }
+        if ("\u8003\u8bd5".equals(type)) {
+            return "\u8003";
+        }
+        if ("\u7ae0\u8282".equals(type)) {
+            return "\u7ae0";
+        }
+        return "\u00b7";
+    }
+
+    private static int badgeColor(Context context, String type) {
+        if ("\u8003\u8bd5".equals(type)) {
+            return UiTheme.badgeExam(context);
+        }
+        if ("\u7ae0\u8282".equals(type)) {
+            return UiTheme.badgeChapter(context);
+        }
+        return UiTheme.badgeHomework(context);
+    }
+
+    private static int badgeBg(Context context, String type) {
+        if ("\u8003\u8bd5".equals(type)) {
+            return UiTheme.badgeExamBg(context);
+        }
+        if ("\u7ae0\u8282".equals(type)) {
+            return UiTheme.badgeChapterBg(context);
+        }
+        return UiTheme.badgeHomeworkBg(context);
+    }
+
+    /** Per-item actions: open in Chaoxing, toggle done state, delete. */
+    private void showItemMenu(DeadlineItem item) {
+        List<String> actions = new ArrayList<>();
+        List<Runnable> runners = new ArrayList<>();
+        if (item.url != null && item.url.startsWith("http")) {
+            actions.add("打开学习通页面");
+            runners.add(() -> openChaoxingPage(item));
+        }
+        actions.add(item.submitted ? "标记为未完成" : "标记为已完成");
+        runners.add(() -> {
+            store.setSubmitted(item.id, !item.submitted);
+            DeadlineNotifier.rescheduleAll(this);
+            OverlayBridge.publish(this);
+            DeadlineWidgetProvider.updateAll(this);
+            reload(false);
+        });
+        actions.add("删除待办");
+        runners.add(() -> DeadlineNotifier.deleteItem(this, item.id));
+        actions.add("取消");
+        runners.add(() -> {
+        });
+        new android.app.AlertDialog.Builder(this)
+                .setTitle(item.title)
+                .setItems(actions.toArray(new String[0]),
+                        (dialog, which) -> runners.get(which).run())
+                .show();
+    }
+
+    private void openChaoxingPage(DeadlineItem item) {
+        try {
+            Intent intent = new Intent(Intent.ACTION_VIEW, android.net.Uri.parse(item.url));
+            intent.setPackage(TARGET_PACKAGE);
+            intent.addFlags(Intent.FLAG_ACTIVITY_NEW_TASK);
+            startActivity(intent);
+        } catch (Throwable throwable) {
+            Toast.makeText(this, "打开学习通失败", Toast.LENGTH_SHORT).show();
+        }
     }
 
     private LinearLayout.LayoutParams rowParams() {
@@ -431,6 +509,11 @@ public final class MainActivity extends BaseActivity implements App.ServiceListe
                     } else {
                         // spring back
                         card.animate().translationX(0f).setDuration(200).start();
+                        if (!swiping) {
+                            // The touch listener swallows ACTION_DOWN, so taps on completed
+                            // items have to be forwarded to the click listener by hand.
+                            card.performClick();
+                        }
                     }
                     swiping = false;
                     return true;

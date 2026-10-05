@@ -43,21 +43,23 @@ public final class DeadlineWidgetList extends DeadlineWidgetProvider {
         views.setViewVisibility(R.id.w_rows, shown > 0 ? android.view.View.VISIBLE : android.view.View.GONE);
         views.setViewVisibility(R.id.w_empty, shown > 0 ? android.view.View.GONE : android.view.View.VISIBLE);
         views.setOnClickPendingIntent(R.id.widget_list_root, mainPendingIntent(context));
+        views.setTextColor(R.id.w_refresh, DeadlineWidgetProvider.mutedText(context));
+        views.setOnClickPendingIntent(R.id.w_refresh, refreshPendingIntent(context));
         return views;
     }
 
     private static RemoteViews row(Context context, DeadlineItem item, int index) {
         RemoteViews row = new RemoteViews(context.getPackageName(), R.layout.widget_row);
-        boolean exam = "考试".equals(item.type);
         row.setTextViewText(R.id.r_badge, item.type);
-        row.setTextColor(R.id.r_badge, exam
-                ? DeadlineWidgetProvider.dangerText(context) : DeadlineWidgetProvider.accent(context));
+        row.setTextColor(R.id.r_badge, DeadlineWidgetProvider.typeColor(context, item.type));
 
         String title = item.title == null || item.title.isEmpty() ? "未命名" : item.title;
         row.setTextViewText(R.id.r_title, title);
         row.setTextColor(R.id.r_title, DeadlineWidgetProvider.primaryText(context));
 
-        String course = item.course == null ? "" : item.course.trim();
+        String course = AppSettings.widgetShowCourse(context)
+                ? (item.course == null ? "" : item.course.trim())
+                : "";
         if (course.isEmpty()) {
             row.setViewVisibility(R.id.r_course, android.view.View.GONE);
         } else {
