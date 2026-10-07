@@ -178,6 +178,10 @@ public final class SettingsActivity extends BaseActivity {
         View backup = innerActionRow("备份与导出", "导出 JSON 备份或 ICS 日历，也可从备份恢复");
         backup.setOnClickListener(v -> startActivity(new Intent(this, BackupActivity.class)));
         manageGroup.addView(backup);
+        manageGroup.addView(divider());
+        View stats = innerActionRow("统计概览", "未完成、已过期、未来 7 天分布与课程分布");
+        stats.setOnClickListener(v -> startActivity(new Intent(this, StatsActivity.class)));
+        manageGroup.addView(stats);
         content.addView(manageGroup, groupParams());
 
         // -- 关于 --

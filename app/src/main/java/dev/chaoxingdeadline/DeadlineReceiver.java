@@ -25,6 +25,8 @@ public final class DeadlineReceiver extends BroadcastReceiver {
     public static final String ACTION_SETTINGS_UPDATE = "dev.chaoxingdeadline.SETTINGS_UPDATE";
     public static final String ACTION_WIDGET_REFRESH = "dev.chaoxingdeadline.WIDGET_REFRESH";
     public static final String ACTION_DAILY_DIGEST = "dev.chaoxingdeadline.DAILY_DIGEST";
+    public static final String ACTION_SNOOZE = "dev.chaoxingdeadline.SNOOZE";
+    public static final String ACTION_SNOOZE_FIRE = "dev.chaoxingdeadline.SNOOZE_FIRE";
     public static final String EXTRA_ITEM_B64 = "item_b64";
     public static final String EXTRA_STATUS = "status";
     public static final String EXTRA_SOURCE = "source";
@@ -68,6 +70,14 @@ public final class DeadlineReceiver extends BroadcastReceiver {
         }
         if (ACTION_DAILY_DIGEST.equals(intent.getAction())) {
             DeadlineNotifier.sendDailyDigest(context);
+            return;
+        }
+        if (ACTION_SNOOZE.equals(intent.getAction())) {
+            DeadlineNotifier.snooze(context, intent.getStringExtra(DeadlineNotifier.EXTRA_DEADLINE_ID));
+            return;
+        }
+        if (ACTION_SNOOZE_FIRE.equals(intent.getAction())) {
+            DeadlineNotifier.notifySnoozed(context, intent.getStringExtra(DeadlineNotifier.EXTRA_DEADLINE_ID));
             return;
         }
         if (ACTION_STATUS.equals(intent.getAction())) {
