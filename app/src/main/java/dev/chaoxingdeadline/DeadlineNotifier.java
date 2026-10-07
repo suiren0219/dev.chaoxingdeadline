@@ -39,6 +39,9 @@ public final class DeadlineNotifier {
 
     private static final long SOON_OFFSET = TimeUnit.HOURS.toMillis(3);
     private static final long URGENT_OFFSET = TimeUnit.MINUTES.toMillis(30);
+    /** Snooze delay used by the notification action. */
+    private static final long SNOOZE_DELAY = TimeUnit.MINUTES.toMillis(30);
+    private static final String SNOOZE_LABEL = "\u7a0d\u540e\u63d0\u9192";
 
     private DeadlineNotifier() {
     }
@@ -485,6 +488,8 @@ public final class DeadlineNotifier {
                 .setStyle(new android.app.Notification.BigTextStyle().bigText(bigText(item, offsetMillis, catchUp)))
                 .setContentIntent(contentIntent)
                 .setAutoCancel(true)
+                .addAction(notificationAction(context, android.R.drawable.ic_menu_recent_history,
+                        "\u7a0d\u540e 30 \u5206\u949f", actionIntent(context, DeadlineReceiver.ACTION_SNOOZE, item.id)))
                 .addAction(notificationAction(context, android.R.drawable.ic_menu_view,
                         "\u6253\u5f00\u5b66\u4e60\u901a", openChaoxingIntent(context)))
                 .addAction(notificationAction(context, android.R.drawable.ic_menu_close_clear_cancel,
@@ -510,6 +515,65 @@ public final class DeadlineNotifier {
             return CHANNEL_URGENT;
         }
         return CHANNEL_ID;
+    }
+
+    /** Re-post the reminder SNOOZE_DELAY minutes later; independent of rescheduleAll. */
+    public static void snooze(Context context, String id) {
+        if (id == null || id.isEmpty()) {
+            return;
+        }
+        DeadlineItem item = new DeadlineStore(context).itemById(id);
+        AlarmManager alarm = (AlarmManager) context.getSystemService(Context.ALARM_SERVICE);
+        if (item == null || alarm == null) {
+            return;
+        }
+        Intent intent = new Intent(context, DeadlineReceiver.class)
+                .setAction(DeadlineReceiver.ACTION_SNOOZE_FIRE)
+                .putExtra(EXTRA_DEADLINE_ID, id);
+        BridgeAuth.attach(context, intent);
+        PendingIntent pending = PendingIntent.getBroadcast(context,
+                ("snooze|" + id).hashCode(), intent,
+                PendingIntent.FLAG_UPDATE_CURRENT | PendingIntent.FLAG_IMMUTABLE);
+        long triggerAt = System.currentTimeMillis() + SNOOZE_DELAY;
+        if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.S && !alarm.canScheduleExactAlarms()) {
+            alarm.setAndAllowWhileIdle(AlarmManager.RTC_WAKEUP, triggerAt, pending);
+        } else {
+            alarm.setExactAndAllowWhileIdle(AlarmManager.RTC_WAKEUP, triggerAt, pending);
+        }
+        cancelNotification(context, item);
+    }
+
+    /** Re-fire a snoozed reminder: same look, its own label, ignores sent markers. */
+    public static void notifySnoozed(Context context, String id) {
+        if (id == null || id.isEmpty()) {
+            return;
+        }
+        DeadlineItem item = new DeadlineStore(context).itemById(id);
+        if (item == null || item.submitted) {
+            return;
+        }
+        if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.TIRAMISU
+                && context.checkSelfPermission(Manifest.permission.POST_NOTIFICATIONS) != PackageManager.PERMISSION_GRANTED) {
+            return;
+        }
+        ensureChannel(context);
+        android.app.Notification.Builder builder = new android.app.Notification.Builder(context, channelFor(context, item, NO_OFFSET))
+                .setSmallIcon(R.drawable.ic_notification)
+                .setContentTitle(item.type + "\u5feb\u622a\u6b62\u4e86")
+                .setContentText(notificationLine(item, SNOOZE_LABEL, false))
+                .setStyle(new android.app.Notification.BigTextStyle().bigText(bigText(item, SNOOZE_LABEL, false)))
+                .setContentIntent(openModuleIntent(context, item))
+                .setAutoCancel(true)
+                .addAction(notificationAction(context, android.R.drawable.ic_menu_recent_history,
+                        "\u7a0d\u540e 30 \u5206\u949f", actionIntent(context, DeadlineReceiver.ACTION_SNOOZE, item.id)))
+                .addAction(notificationAction(context, android.R.drawable.ic_menu_view,
+                        "\u6253\u5f00\u5b66\u4e60\u901a", openChaoxingIntent(context)))
+                .addAction(notificationAction(context, android.R.drawable.ic_menu_close_clear_cancel,
+                        "\u5ffd\u7565\u672c\u6b21", actionIntent(context, DeadlineReceiver.ACTION_IGNORE, item.id)));
+        NotificationManager manager = (NotificationManager) context.getSystemService(Context.NOTIFICATION_SERVICE);
+        if (manager != null) {
+            manager.notify(notificationId(item), builder.build());
+        }
     }
 
     private static android.app.Notification.Action notificationAction(
@@ -572,7 +636,11 @@ public final class DeadlineNotifier {
     }
 
     private static String notificationLine(DeadlineItem item, long offsetMillis, boolean catchUp) {
-        String prefix = reminderLabel(offsetMillis);
+        return notificationLine(item, reminderLabel(offsetMillis), catchUp);
+    }
+
+    private static String notificationLine(DeadlineItem item, String label, boolean catchUp) {
+        String prefix = label;
         if (catchUp) {
             prefix += "\u00b7\u8865\u53d1";
         }
@@ -580,13 +648,17 @@ public final class DeadlineNotifier {
     }
 
     private static String bigText(DeadlineItem item, long offsetMillis, boolean catchUp) {
+        return bigText(item, reminderLabel(offsetMillis), catchUp);
+    }
+
+    private static String bigText(DeadlineItem item, String label, boolean catchUp) {
         StringBuilder builder = new StringBuilder();
         if (item.course != null && !item.course.isEmpty()) {
             builder.append(item.course).append('\n');
         }
         builder.append(item.title).append('\n')
                 .append(DateText.dueLine(item.dueAt)).append('\n')
-                .append("\u63d0\u9192\uff1a").append(reminderLabel(offsetMillis));
+                .append("\u63d0\u9192\uff1a").append(label);
         if (catchUp) {
             builder.append("\uff08\u8865\u53d1\uff09");
         }

@@ -48,6 +48,9 @@
         <activity
             android:name=".BackupActivity"
             android:exported="false" />
+        <activity
+            android:name=".StatsActivity"
+            android:exported="false" />
         <!-- Exported intentionally: the launcher starts this as the AppWidget configure
              activity. It only reads the widget id and writes module-local preferences. -->
         <activity

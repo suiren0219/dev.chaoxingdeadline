@@ -8,7 +8,16 @@ import android.content.Intent;
 import android.content.IntentFilter;
 import android.content.SharedPreferences;
 import android.content.pm.PackageManager;
+import android.text.Editable;
+import android.text.TextWatcher;
 import android.widget.Toast;
+import android.widget.AdapterView;
+import android.widget.ArrayAdapter;
+import android.widget.EditText;
+import android.widget.LinearLayout;
+import android.widget.ScrollView;
+import android.widget.Spinner;
+import android.widget.TextView;
 import android.os.Build;
 import android.os.Bundle;
 import android.os.Handler;
@@ -16,9 +25,6 @@ import android.os.Looper;
 import android.view.Gravity;
 import android.view.MotionEvent;
 import android.view.View;
-import android.widget.LinearLayout;
-import android.widget.ScrollView;
-import android.widget.TextView;
 
 import java.text.SimpleDateFormat;
 import java.util.Collections;
@@ -48,6 +54,10 @@ public final class MainActivity extends BaseActivity implements App.ServiceListe
     private TextView countExpired;
     private TextView countBlocked;
     private LinearLayout emptyContainer;
+    private EditText searchInput;
+    private Spinner typeFilter;
+    private String searchQuery = "";
+    private String typeFilterValue = "";
 
     private final Runnable tick = new Runnable() {
         @Override public void run() { reload(false); handler.postDelayed(this, 5000L); }
@@ -152,6 +162,55 @@ public final class MainActivity extends BaseActivity implements App.ServiceListe
         stats.addView(statChip("⊘", "已屏蔽", countBlocked), chipParams(1f));
         root.addView(stats, marTop(dp(16)));
 
+        // --- filter bar ---
+        LinearLayout filterBar = new LinearLayout(this);
+        filterBar.setOrientation(LinearLayout.HORIZONTAL);
+        filterBar.setGravity(Gravity.CENTER_VERTICAL);
+        filterBar.setPadding(dp(14), dp(9), dp(14), dp(9));
+        filterBar.setBackground(UiTheme.cardBg(this, 14));
+        searchInput = new EditText(this);
+        searchInput.setHint("搜索标题或课程");
+        searchInput.setSingleLine();
+        searchInput.setTextSize(13);
+        searchInput.setBackground(null);
+        searchInput.setPadding(0, 0, 0, 0);
+        searchInput.setTextColor(UiTheme.text(this));
+        searchInput.setHintTextColor(UiTheme.muted(this));
+        filterBar.addView(searchInput, new LinearLayout.LayoutParams(0, -2, 1f));
+        typeFilter = new Spinner(this);
+        typeFilter.setAdapter(new ArrayAdapter<>(this,
+                android.R.layout.simple_spinner_dropdown_item,
+                new String[]{"全部", "作业", "考试", "章节"}));
+        typeFilter.setOnItemSelectedListener(new AdapterView.OnItemSelectedListener() {
+            @Override
+            public void onItemSelected(AdapterView<?> parent, View view, int position, long id) {
+                String value = String.valueOf(parent.getItemAtPosition(position));
+                typeFilterValue = "全部".equals(value) ? "" : value;
+                rebuildItemList();
+            }
+
+            @Override
+            public void onNothingSelected(AdapterView<?> parent) {
+            }
+        });
+        filterBar.addView(typeFilter, new LinearLayout.LayoutParams(-2, -2));
+        root.addView(filterBar, marTop(dp(12)));
+        searchInput.addTextChangedListener(new TextWatcher() {
+            @Override
+            public void beforeTextChanged(CharSequence s, int start, int count, int after) {
+            }
+
+            @Override
+            public void onTextChanged(CharSequence s, int start, int before, int count) {
+            }
+
+            @Override
+            public void afterTextChanged(Editable s) {
+                searchQuery = s.toString().trim();
+                rebuildItemList();
+            }
+        });
+
         // --- section ---
         root.addView(sectionHeader("待办事项"));
 
@@ -248,7 +307,17 @@ public final class MainActivity extends BaseActivity implements App.ServiceListe
         itemList.removeAllViews();
         // sort: pending first (earliest deadline top), then submitted/expired items.
         long now = System.currentTimeMillis();
-        List<DeadlineItem> sorted = new ArrayList<>(items);
+        String query = searchQuery.toLowerCase(Locale.ROOT);
+        List<DeadlineItem> sorted = new ArrayList<>();
+        for (DeadlineItem item : items) {
+            if (!typeFilterValue.isEmpty() && !typeFilterValue.equals(item.type)) {
+                continue;
+            }
+            if (!matchesQuery(item, query)) {
+                continue;
+            }
+            sorted.add(item);
+        }
         Collections.sort(sorted, (a, b) -> {
             boolean aDone = a.submitted || a.dueAt <= now;
             boolean bDone = b.submitted || b.dueAt <= now;
@@ -256,6 +325,20 @@ public final class MainActivity extends BaseActivity implements App.ServiceListe
             return aDone ? Long.compare(b.dueAt, a.dueAt) : Long.compare(a.dueAt, b.dueAt);
         });
         for (DeadlineItem item : sorted) itemList.addView(itemRow(item), rowParams());
+        if (sorted.isEmpty() && !items.isEmpty()) {
+            TextView noMatch = text("没有匹配的待办\n试试清空搜索或切换类型", 13, false, UiTheme.muted(this));
+            noMatch.setGravity(Gravity.CENTER);
+            noMatch.setPadding(dp(8), dp(18), dp(8), dp(18));
+            itemList.addView(noMatch, new LinearLayout.LayoutParams(-1, -2));
+        }
+    }
+
+    private static boolean matchesQuery(DeadlineItem item, String query) {
+        if (query.isEmpty()) {
+            return true;
+        }
+        return (item.title != null && item.title.toLowerCase(Locale.ROOT).contains(query))
+                || (item.course != null && item.course.toLowerCase(Locale.ROOT).contains(query));
     }
 
     private View itemRow(DeadlineItem item) {
