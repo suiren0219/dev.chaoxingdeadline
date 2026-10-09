@@ -37,7 +37,6 @@ public final class DeadlineNotifier {
     /** Sentinel for "no offset supplied": 0 ms is a real offset (the due-time reminder). */
     public static final long NO_OFFSET = -1L;
 
-    private static final long SOON_OFFSET = TimeUnit.HOURS.toMillis(3);
     private static final long URGENT_OFFSET = TimeUnit.MINUTES.toMillis(30);
     /** Snooze delay used by the notification action. */
     private static final long SNOOZE_DELAY = TimeUnit.MINUTES.toMillis(30);
@@ -549,7 +548,9 @@ public final class DeadlineNotifier {
             return;
         }
         DeadlineItem item = new DeadlineStore(context).itemById(id);
-        if (item == null || item.submitted) {
+        // Re-check everything that could have changed during the 30 quiet minutes: the item
+        // may be done, and the type's notifications may have been switched off meanwhile.
+        if (item == null || item.submitted || !AppSettings.shouldNotifyType(context, item.type)) {
             return;
         }
         if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.TIRAMISU
@@ -636,7 +637,7 @@ public final class DeadlineNotifier {
     }
 
     private static String notificationLine(DeadlineItem item, long offsetMillis, boolean catchUp) {
-        return notificationLine(item, reminderLabel(offsetMillis), catchUp);
+        return notificationLine(item, ReminderText.label(item, offsetMillis, System.currentTimeMillis()), catchUp);
     }
 
     private static String notificationLine(DeadlineItem item, String label, boolean catchUp) {
@@ -648,7 +649,7 @@ public final class DeadlineNotifier {
     }
 
     private static String bigText(DeadlineItem item, long offsetMillis, boolean catchUp) {
-        return bigText(item, reminderLabel(offsetMillis), catchUp);
+        return bigText(item, ReminderText.label(item, offsetMillis, System.currentTimeMillis()), catchUp);
     }
 
     private static String bigText(DeadlineItem item, String label, boolean catchUp) {
@@ -663,18 +664,6 @@ public final class DeadlineNotifier {
             builder.append("\uff08\u8865\u53d1\uff09");
         }
         return builder.toString();
-    }
-
-    private static String reminderLabel(long offsetMillis) {
-        if (offsetMillis <= 0L) {
-            return "\u73b0\u5728\u622a\u6b62";
-        }
-        if (offsetMillis >= TimeUnit.HOURS.toMillis(1)) {
-            long hours = offsetMillis / TimeUnit.HOURS.toMillis(1);
-            return "\u63d0\u524d " + hours + " \u5c0f\u65f6";
-        }
-        long minutes = Math.max(1L, offsetMillis / TimeUnit.MINUTES.toMillis(1));
-        return "\u63d0\u524d " + minutes + " \u5206\u949f";
     }
 
     private static void cleanupSentMarkers(Context context, List<DeadlineItem> items) {

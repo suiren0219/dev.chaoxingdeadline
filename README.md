@@ -21,8 +21,8 @@ LSPosed Xposed 模块，自动捕获超星学习通作业和考试截止时间�
 这是**已装版本与新包签名不一致**，不是包损坏。先确认手机上那一份用的是哪个签名：
 
 ```bash
-adb shell pm path dev.chaoxingdeadline          # 取回形如 package:/data/app/.../base.apk
-adb shell pull <上一步的路径> installed.apk      # 若 pull 失败，改用 adb pull
+adb shell pm path dev.chaoxingdeadline          # 返回形如 package:/data/app/.../base.apk
+adb pull /data/app/.../base.apk installed.apk   # 用上一步的路径，去掉开头的 package:
 java -jar <android-sdk>/build-tools/36.0.0/lib/apksigner.jar verify --print-certs installed.apk
 ```
 
@@ -45,10 +45,10 @@ adb shell su -c "cp /data/data/dev.chaoxingdeadline/databases/deadlines.db /sdca
 adb pull /sdcard/Download/deadlines.db
 python tools/db_to_backup.py deadlines.db        # 生成 deadlines-backup.json
 adb uninstall dev.chaoxingdeadline
-adb install Deadline-1.6.0-release.apk
+adb install Deadline-1.8.1-release.apk
 ```
 
-装好 1.6.0 后：把 `deadlines-backup.json` 传到手机，走「设置 → 备份与导出 → 从备份恢复（JSON）」即可。
+装好新版后：把 `deadlines-backup.json` 传到手机，走「设置 → 备份与导出 → 从备份恢复（JSON）」即可。
 脚本支持 `--pending-only`，只保留未完成且未截止的条目。
 
 ## 使用
@@ -92,8 +92,9 @@ adb install Deadline-1.6.0-release.apk
 ./gradlew :app:testDebugUnitTest # 跑 DeadlineParser 的单元测试
 ```
 
-> Windows 提示：若工程位于含中文等非 ASCII 字符的路径（例如 `D:\学习通`），单元测试会因
-> JDK 按平台字符集展开 `@argfile` 而找不到测试类。把工程复制到纯 ASCII 路径下再跑即可；
+> Windows 提示：仓库实际位于 `D:\cxdeadline`（纯 ASCII），`D:\学习通\module` 只是指向它的
+> 符号链接 —— 这样在中文路径下工作也不会踩到 JDK 展开 `@argfile` 的平台编码问题。
+> 若把工程复制进一个含中文的普通目录，`./gradlew test` 会报找不到测试类，改从 ASCII 路径跑即可；
 > CI 使用 Linux，不受影响。
 
 推送 `v*` 标签会自动触发 Release 工作流，构建并上传 APK（签名密钥通过仓库 Secrets

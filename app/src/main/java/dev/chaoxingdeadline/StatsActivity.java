@@ -77,6 +77,12 @@ public final class StatsActivity extends BaseActivity {
         summary.addView(statLine("未完成", String.valueOf(pending), UiTheme.accent(this)));
         summary.addView(statLine("已过期", String.valueOf(expired), UiTheme.warningText(this)));
         summary.addView(statLine("已完成", String.valueOf(done), UiTheme.muted(this)));
+        if (AppSettings.autoDeleteExpired(this)) {
+            // Without this note "已完成 0" looks like a bug rather than a consequence of the
+            // cleanup setting: submitted and expired rows are deleted, so they cannot be counted.
+            summary.addView(mutedRow("已开启「自动删除已完成待办」：已提交和已截止的记录会被自动清理，"
+                    + "上面这两项只统计尚未清理的部分。"));
+        }
         content.addView(summary, groupParams());
 
         content.addView(sectionHeader("未来 7 天"));
