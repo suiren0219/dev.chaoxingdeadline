@@ -25,7 +25,7 @@ import org.robolectric.annotation.Config;
 public class MainActivityLaunchTest {
 
     @Test
-    public void launchesOnTheTodayTabWithoutCrashing() {
+    public void launchesOnTheTodoTabWithoutCrashing() {
         ActivityController<MainActivity> controller =
                 Robolectric.buildActivity(MainActivity.class).setup();
         Activity activity = controller.get();
@@ -39,7 +39,8 @@ public class MainActivityLaunchTest {
         ActivityController<MainActivity> controller =
                 Robolectric.buildActivity(MainActivity.class).setup();
         MainActivity activity = controller.get();
-        for (int tab = 0; tab < 3; tab++) {
+        // Two tabs now: 待办 and 我的.
+        for (int tab = 0; tab < 2; tab++) {
             activity.showTabForTest(tab);
         }
         controller.pause().stop().destroy();
