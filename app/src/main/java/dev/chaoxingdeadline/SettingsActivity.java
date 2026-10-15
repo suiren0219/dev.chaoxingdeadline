@@ -56,7 +56,7 @@ public final class SettingsActivity extends BaseActivity {
                 + "维护状态：本 fork 已停止维护，不再接收新功能与适配。"
                 + "\n\n"
                 + "课表说明：课表数据由学校教务系统同步到学习通，可能存在延迟或临时变更，"
-                + "请以学习通内课表为准。",
+                + "请以教务系统为准。",
                 12, false, UiTheme.muted(this));
         noteBody.setLineSpacing(0f, 1.25f);
         noteBody.setPadding(0, dp(6), 0, 0);
@@ -197,6 +197,11 @@ public final class SettingsActivity extends BaseActivity {
         schedule.setOnClickListener(v -> startActivity(new Intent(this, ScheduleActivity.class)));
         manageGroup.addView(schedule);
         manageGroup.addView(divider());
+        View holidays = innerActionRow("调休日历",
+                HolidayCalendar.summary(this));
+        holidays.setOnClickListener(v -> startActivity(new Intent(this, MonthCalendarActivity.class)));
+        manageGroup.addView(divider());
+        manageGroup.addView(holidays);
         View aliases = innerActionRow("课表字段映射",
                 AppSettings.timetableAliases(this).isEmpty()
                         ? "自动识别；若你的学校课表拉不到，在此填写字段名"

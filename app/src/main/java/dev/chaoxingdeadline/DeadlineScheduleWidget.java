@@ -22,23 +22,26 @@ import java.util.Locale;
  * The home-screen widget: one panel with two faces — the day's timetable and the
  * deadline list — switched by the ⇄ button in the header.
  *
- * The timetable face lists several lessons at once rather than one per page: 4x2 is the
- * common placement, and a timetable you have to tap through is not a timetable. The rows
- * are static RemoteViews added to a plain {@link android.widget.LinearLayout}, which is the
- * container that can hold them: {@code RemoteViews.addView} supports any ViewGroup, and a
- * LinearLayout shows every child at once. The alternatives do not work — StackView and
+ * The timetable face is designed around the 4x2 placement, which is what the widget
+ * declares and what most people use: it lists the lessons of the day at once rather than
+ * one per page, because a timetable you have to tap through is not a timetable. Rows are
+ * static RemoteViews added to a plain {@link android.widget.LinearLayout}, which is the
+ * container that can hold them — {@code RemoteViews.addView} supports any ViewGroup, and a
+ * LinearLayout shows every child at once. The alternatives do not work: StackView and
  * ListView extend AdapterView, whose {@code addView} throws UnsupportedOperationException
  * (they need a RemoteViewsService, i.e. an extra bound service and a blank widget whenever
- * the launcher kills the process), and a ViewFlipper accepts children but displays only one
- * at a time.
+ * the launcher kills the process), and a ViewFlipper accepts children but displays one.
  *
- * How many rows fit is read from the widget's own height, not assumed: a 4x2 panel and a
- * 4x4 panel get different counts, so the same layout serves both without scrolling.
+ * How many rows fit is read from the widget's own height, and so is how much chrome the
+ * header may spend: a 4x2 strip gets a single-line header and tighter rows, a taller panel
+ * gets the full header and up to {@link #MAX_ROWS} rows. One layout therefore serves both
+ * without scrolling.
  *
- * After {@link #EVENING_HOUR} the face switches to tomorrow's timetable, since that is
- * what someone checking their phone in the evening wants to see; it rolls back to today
- * after midnight. Each widget instance remembers its own face, so two widgets on the same
- * home screen do not fight over the display.
+ * Lessons that have already finished are dropped from the list, so the face always answers
+ * "what is left today" rather than repeating the morning at 8pm; a lesson in progress heads
+ * it and is marked. After {@link #EVENING_HOUR} the face previews tomorrow instead, which
+ * rolls back to today after midnight. Each widget instance remembers its own face, so two
+ * widgets on the same home screen do not fight over the display.
  */
 public final class DeadlineScheduleWidget extends AppWidgetProvider {
     /** Per-widget UI state: which face is showing. */
@@ -46,12 +49,32 @@ public final class DeadlineScheduleWidget extends AppWidgetProvider {
     private static final String KEY_FACE = "face_";
     /** Absolute cap, so a tall panel cannot fill the home screen with timetable rows. */
     private static final int MAX_ROWS = 8;
-    /** Height of one lesson row, from widget_schedule_card.xml (34dp strip + padding). */
+    /** Height of one lesson row on a tall panel (34dp strip + padding + gap). */
     private static final int ROW_HEIGHT_DP = 48;
-    /** Header plus the "reference only" footnote, which the rows share the panel with. */
+    /** Header plus the footnote, which the rows share a tall panel with. */
     private static final int CHROME_HEIGHT_DP = 96;
+    /**
+     * Below this the panel is the 4x2 strip, and the chrome has to give way to the rows.
+     *
+     * A 4x2 panel is roughly 120-160dp tall. Charging it the full 96dp of chrome (two-line
+     * header, footnote and margins) leaves room for a single lesson, which is exactly the
+     * complaint this fixes. A short panel therefore gets a one-line header, tighter margins
+     * and slightly shorter rows — the difference between "4x2 works" and "4x2 shows one".
+     */
+    private static final int COMPACT_HEIGHT_DP = 200;
+    /**
+     * Chrome a short panel may spend: 8dp padding + a one-line header + gap + footnote.
+     *
+     * The footnote is the "reference only" line the user asked to keep, so it stays even
+     * here; what goes is the second header line and the generous padding. 56dp is what is
+     * left after those, and it is deliberately tight — every dp spent on chrome is a lesson
+     * that does not fit, and at 4x2 the whole point is several lessons at once.
+     */
+    private static final int CHROME_COMPACT_DP = 56;
+    /** Row height on a short panel; the row layout is the same, it just gets less room. */
+    private static final int ROW_COMPACT_DP = 42;
     /** Rows assumed when the launcher reports no size: what a 4x2 panel fits. */
-    static final int DEFAULT_ROWS = 3;
+    static final int DEFAULT_ROWS = 2;
     /** From this hour on, the timetable face previews tomorrow instead of today. */
     static final int EVENING_HOUR = 21;
 
@@ -112,7 +135,7 @@ public final class DeadlineScheduleWidget extends AppWidgetProvider {
     /**
      * Test hook: build one face through the real path, with the row budget forced.
      *
-     * {@code build} reads its face from SharedPreferences and its row count from the
+     * {@code build} reads its face from SharedPreferences and its geometry from the
      * launcher's reported widget size, neither of which a unit test can control from
      * outside. This enters the same code with both pinned.
      */
@@ -122,20 +145,44 @@ public final class DeadlineScheduleWidget extends AppWidgetProvider {
 
     static RemoteViews buildForTest(Context context, int appWidgetId, int face, int forcedRows) {
         statePrefs(context).edit().putInt(KEY_FACE + appWidgetId, face).apply();
-        return forcedRows > 0
-                ? buildWithBudget(context, appWidgetId, forcedRows)
-                : build(context, appWidgetId);
+        return build(context, appWidgetId, forcedRows, 0);
     }
 
     private static RemoteViews build(Context context, int appWidgetId) {
-        return buildWithBudget(context, appWidgetId, -1);
+        return build(context, appWidgetId, -1, reportedHeightDp(context, appWidgetId));
     }
 
-    /** @param forcedRows row budget to use instead of reading the widget's height; -1 to read it. */
-    private static RemoteViews buildWithBudget(Context context, int appWidgetId, int forcedRows) {
+    /**
+     * Height the launcher reports for this instance, or 0 when it reports nothing.
+     *
+     * Both the row budget and the chrome decision come from this one read, so the caller
+     * passes it down rather than each part asking the framework again.
+     */
+    private static int reportedHeightDp(Context context, int appWidgetId) {
+        try {
+            android.os.Bundle options =
+                    AppWidgetManager.getInstance(context).getAppWidgetOptions(appWidgetId);
+            if (options != null) {
+                String key = android.os.Build.VERSION.SDK_INT >= 31
+                        ? AppWidgetManager.OPTION_APPWIDGET_MAX_HEIGHT
+                        : AppWidgetManager.OPTION_APPWIDGET_MIN_HEIGHT;
+                return options.getInt(key, 0);
+            }
+        } catch (Throwable ignored) {
+        }
+        return 0;
+    }
+
+    /**
+     * @param forcedRows row budget to use instead of the reported height; -1 to derive it
+     * @param heightDp   height the launcher reported; 0 when unknown
+     */
+    private static RemoteViews build(Context context, int appWidgetId, int forcedRows,
+                                     int heightDp) {
         RemoteViews views = new RemoteViews(context.getPackageName(), R.layout.widget_schedule);
         SharedPreferences prefs = statePrefs(context);
         boolean timetableFace = prefs.getInt(KEY_FACE + appWidgetId, FACE_TIMETABLE) == FACE_TIMETABLE;
+        boolean compact = isCompact(heightDp);
 
         long now = System.currentTimeMillis();
         DeadlineStore store = new DeadlineStore(context);
@@ -152,10 +199,17 @@ public final class DeadlineScheduleWidget extends AppWidgetProvider {
         views.setInt(R.id.s_empty_action, "setBackgroundColor",
                 DeadlineWidgetProvider.accent(context));
 
+        // The compact arithmetic above assumes a small outer padding; make it true here
+        // rather than only in the comment.
+        int pad = compact ? dp(context, 8) : dp(context, 16);
+        views.setViewPadding(R.id.widget_schedule_root, pad, pad, pad, pad);
+        views.setViewPadding(R.id.s_note, 0, 0, 0, 0);
+
         views.removeAllViews(R.id.s_rows);
-        int rowBudget = forcedRows > 0 ? forcedRows : rowBudget(context, appWidgetId);
+        int rowBudget = forcedRows > 0 ? forcedRows : rowsForHeight(heightDp);
         if (timetableFace) {
-            buildTimetableFace(context, views, store, now, firstWeekDate, sectionTimes, rowBudget);
+            buildTimetableFace(context, views, store, now, firstWeekDate, sectionTimes,
+                    rowBudget, compact);
             views.setViewVisibility(R.id.s_note, View.VISIBLE);
         } else {
             int count = pending.size();
@@ -163,7 +217,7 @@ public final class DeadlineScheduleWidget extends AppWidgetProvider {
             views.setTextViewText(R.id.s_updated, count > 0
                     ? "共 " + count + " 项 · 更新于 " + DateText.deadlineTime(now)
                     : "更新于 " + DateText.deadlineTime(now));
-            views.setViewVisibility(R.id.s_updated, View.VISIBLE);
+            views.setViewVisibility(R.id.s_updated, View.GONE);
             views.setViewVisibility(R.id.s_note, View.GONE);
             buildTodoFace(context, views, pending, rowBudget);
         }
@@ -178,32 +232,39 @@ public final class DeadlineScheduleWidget extends AppWidgetProvider {
 
     private static void buildTimetableFace(Context context, RemoteViews views, DeadlineStore store,
                                            long now, long firstWeekDate, String sectionTimes,
-                                           int rowBudget) {
+                                           int rowBudget, boolean compact) {
         views.setViewVisibility(R.id.s_todo_empty, View.GONE);
         boolean tomorrow = showingTomorrow(now);
         // The evening preview belongs to the next calendar day, so both the lessons and
         // their timestamps come from that day.
         long dayStart = now + (tomorrow ? 24L * 60L * 60L * 1000L : 0L);
         int week = ScheduleMath.currentWeek(dayStart, firstWeekDate);
-        List<Lesson> lessons = ScheduleMath.lessonsOn(store.allLessons(), dayStart, firstWeekDate);
+        List<Lesson> all = ScheduleMath.lessonsOn(store.allLessons(), dayStart, firstWeekDate);
         Lesson current = tomorrow ? null
-                : ScheduleMath.currentLesson(lessons, now, firstWeekDate, sectionTimes);
+                : ScheduleMath.currentLesson(all, now, firstWeekDate, sectionTimes);
+        // Lessons already over are dropped, not dimmed: the face answers "what is left
+        // today", and a finished morning only displaces the afternoon in a 4x2 strip.
+        List<Lesson> lessons = remaining(all, current, now, firstWeekDate, sectionTimes, tomorrow);
 
         String weekday = new SimpleDateFormat("M月d日 EEEE", Locale.CHINA).format(new Date(dayStart));
         String dayWord = tomorrow ? "明天" : "今天";
-        views.setTextViewText(R.id.s_header, week > 0
+        String header = week > 0
                 ? "第 " + week + " 周 · " + dayWord + " " + lessons.size() + " 节"
-                : "课表未获取");
+                : "课表未获取";
+        views.setTextViewText(R.id.s_header, header);
+        // A 4x2 strip cannot afford a second header line; the date is what it drops.
+        views.setViewVisibility(R.id.s_updated, compact ? View.GONE : View.VISIBLE);
+        // A short panel cannot spare the usual gap above the rows.
+        views.setViewPadding(R.id.s_rows, 0, 0, 0, dp(context, compact ? 4 : 10));
         views.setTextViewText(R.id.s_updated, weekday + " · 更新于 "
                 + DateText.deadlineTime(now));
-        views.setViewVisibility(R.id.s_updated, View.VISIBLE);
 
         if (lessons.isEmpty()) {
             views.setViewVisibility(R.id.s_rows, View.GONE);
             views.setViewVisibility(R.id.s_empty, View.VISIBLE);
             boolean everFetched = store.scheduleUpdatedAt() > 0L;
             views.setTextViewText(R.id.s_empty_text, everFetched
-                    ? (tomorrow ? "明天没有课" : "今天没有课")
+                    ? (tomorrow ? "明天没有课" : (all.isEmpty() ? "今天没有课" : "今天的课已上完"))
                     : "还没有课表数据\n打开学习通课表页面即可自动获取");
             views.setViewVisibility(R.id.s_empty_action, everFetched ? View.GONE : View.VISIBLE);
             views.setOnClickPendingIntent(R.id.s_empty_action,
@@ -213,12 +274,11 @@ public final class DeadlineScheduleWidget extends AppWidgetProvider {
 
         views.setViewVisibility(R.id.s_empty, View.GONE);
         views.setViewVisibility(R.id.s_rows, View.VISIBLE);
-        // While a class is in session it heads the list (the widget answers "what now?");
-        // otherwise plain time order, which is what the day reads as.
+        // While a class is in session it heads the list (the widget answers "what now?").
         List<Lesson> ordered = new ArrayList<>(lessons);
         if (current != null) {
             for (int i = 0; i < ordered.size(); i++) {
-                if (current.id != null && current.id.equals(ordered.get(i).id)) {
+                if (sameLesson(current, ordered.get(i))) {
                     ordered.add(0, ordered.remove(i));
                     break;
                 }
@@ -232,28 +292,38 @@ public final class DeadlineScheduleWidget extends AppWidgetProvider {
     }
 
     /**
-     * How many lesson rows this instance can show.
+     * The lessons still to come (plus the one in progress), earliest first.
      *
-     * Read from the widget's own size rather than fixed, because the same layout backs both
-     * the 4x2 placement (two or three rows) and a taller one (up to {@link #MAX_ROWS}).
-     * The launcher reports the size in dp via {@link AppWidgetManager#getAppWidgetOptions},
-     * so the arithmetic is done in dp and converted at the end. A launcher that reports
-     * nothing gets the 4x2-friendly default rather than a guess that overflows.
+     * Dropping finished lessons keeps a 4x2 panel useful all day: at 8pm the strip should
+     * show tomorrow's first class, not this morning's. The lesson in progress is kept even
+     * though its start is in the past, because "what am I in right now" is the question the
+     * widget exists to answer. Tomorrow's list is already entirely in the future.
      */
-    private static int rowBudget(Context context, int appWidgetId) {
-        int heightDp = 0;
-        try {
-            android.os.Bundle options =
-                    AppWidgetManager.getInstance(context).getAppWidgetOptions(appWidgetId);
-            if (options != null) {
-                String key = android.os.Build.VERSION.SDK_INT >= 31
-                        ? AppWidgetManager.OPTION_APPWIDGET_MAX_HEIGHT
-                        : AppWidgetManager.OPTION_APPWIDGET_MIN_HEIGHT;
-                heightDp = options.getInt(key, 0);
-            }
-        } catch (Throwable ignored) {
+    static List<Lesson> remaining(List<Lesson> lessons, Lesson current, long now,
+                                  long firstWeekDate, String sectionTimes, boolean tomorrow) {
+        if (lessons == null || lessons.isEmpty() || tomorrow) {
+            return lessons == null ? new ArrayList<>() : lessons;
         }
-        return rowsForHeight(heightDp);
+        int week = ScheduleMath.currentWeek(now, firstWeekDate);
+        ArrayList<Lesson> result = new ArrayList<>();
+        for (Lesson lesson : lessons) {
+            if (current != null && sameLesson(current, lesson)) {
+                result.add(lesson);
+                continue;
+            }
+            long end = ScheduleMath.lessonEndAt(firstWeekDate, week, lesson.dayOfWeek,
+                    lesson.beginSection, lesson.sections, sectionTimes);
+            if (end <= 0L || now < end) {
+                result.add(lesson);
+            }
+        }
+        return result;
+    }
+
+    /** Identity by slot, because the server's lesson id is not stable across weeks. */
+    private static boolean sameLesson(Lesson first, Lesson second) {
+        return first != null && second != null
+                && Lesson.slotKey(first).equals(Lesson.slotKey(second));
     }
 
     private static void buildTodoFace(Context context, RemoteViews views,
@@ -274,22 +344,30 @@ public final class DeadlineScheduleWidget extends AppWidgetProvider {
     }
 
     /**
-     * Rows that fit in a panel {@code heightDp} tall: everything above the chrome goes to
-     * rows, at {@link #ROW_HEIGHT_DP} each, clamped to [1, {@link #MAX_ROWS}].
+     * Rows that fit in a panel {@code heightDp} tall, clamped to [1, {@link #MAX_ROWS}].
      *
      * Pure dp arithmetic — no density conversion and no Android calls — so the sizing rules
-     * are unit-testable, and a launcher reporting 0 (which happens) falls back to the 4x2
-     * default rather than a value that overflows.
+     * are unit-testable. A short (4x2) panel is charged {@link #CHROME_COMPACT_DP} of header
+     * and {@link #ROW_COMPACT_DP} per row; a tall one gets the roomier pair. A launcher that
+     * reports nothing (which happens) falls back to {@link #DEFAULT_ROWS}, the 4x2 figure.
      */
     static int rowsForHeight(int heightDp) {
         if (heightDp <= 0) {
             return DEFAULT_ROWS;
         }
-        int usable = heightDp - CHROME_HEIGHT_DP;
+        boolean compact = isCompact(heightDp);
+        int chrome = compact ? CHROME_COMPACT_DP : CHROME_HEIGHT_DP;
+        int rowHeight = compact ? ROW_COMPACT_DP : ROW_HEIGHT_DP;
+        int usable = heightDp - chrome;
         if (usable <= 0) {
             return 1;
         }
-        return Math.max(1, Math.min(MAX_ROWS, usable / ROW_HEIGHT_DP));
+        return Math.max(1, Math.min(MAX_ROWS, usable / rowHeight));
+    }
+
+    /** Whether the reported height means the panel is the short 4x2 strip. */
+    static boolean isCompact(int heightDp) {
+        return heightDp > 0 && heightDp < COMPACT_HEIGHT_DP;
     }
 
     private static RemoteViews row(Context context, Lesson lesson, Lesson current, int week,
@@ -301,9 +379,7 @@ public final class DeadlineScheduleWidget extends AppWidgetProvider {
                 lesson.beginSection, sectionTimes);
         long end = ScheduleMath.lessonEndAt(firstWeekDate, week, lesson.dayOfWeek,
                 lesson.beginSection, lesson.sections, sectionTimes);
-        boolean isCurrent = !tomorrow && current != null && current.id != null
-                && current.id.equals(lesson.id);
-        boolean isPast = !tomorrow && end > 0L && now >= end;
+        boolean isCurrent = !tomorrow && sameLesson(current, lesson);
 
         int[] colors = UiTheme.courseColors(context, lesson.name);
         row.setInt(R.id.card_strip, "setBackgroundColor", colors[1]);
@@ -317,14 +393,11 @@ public final class DeadlineScheduleWidget extends AppWidgetProvider {
         row.setTextViewText(R.id.card_name, lesson.name == null || lesson.name.isEmpty()
                 ? "未命名课程" : lesson.name);
         row.setTextColor(R.id.card_name, DeadlineWidgetProvider.primaryText(context, true));
-        // Finished lessons stay visible but recede; the day's shape still reads at a glance.
-        float alpha = isPast && !isCurrent ? 0.55f : 1f;
-        row.setFloat(R.id.card_name, "setAlpha", alpha);
-        row.setFloat(R.id.card_meta, "setAlpha", alpha);
 
         row.setTextViewText(R.id.card_meta, placeLabel(context, lesson));
         row.setTextColor(R.id.card_meta, DeadlineWidgetProvider.mutedText(context, true));
 
+        // The chip marks the lesson in progress; finished ones are not listed at all.
         row.setViewVisibility(R.id.card_live, isCurrent ? View.VISIBLE : View.GONE);
         if (isCurrent) {
             row.setInt(R.id.card_live, "setBackgroundColor", DeadlineWidgetProvider.accent(context));
@@ -369,6 +442,11 @@ public final class DeadlineScheduleWidget extends AppWidgetProvider {
         intent.setFlags(Intent.FLAG_ACTIVITY_NEW_TASK | Intent.FLAG_ACTIVITY_CLEAR_TOP);
         return PendingIntent.getActivity(context, "schedule_open".hashCode(), intent,
                 PendingIntent.FLAG_UPDATE_CURRENT | PendingIntent.FLAG_IMMUTABLE);
+    }
+
+    /** dp → px, for the RemoteViews padding calls above. */
+    private static int dp(Context context, int value) {
+        return Math.round(value * context.getResources().getDisplayMetrics().density);
     }
 
     private static SharedPreferences statePrefs(Context context) {

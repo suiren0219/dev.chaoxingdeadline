@@ -144,16 +144,70 @@ public class ClassReminderTest {
 
     @Test
     public void widgetRowBudgetMatchesThePanelSize() {
-        // A 4x2 panel (about 110-140dp tall on most launchers) must show more than one row
-        // but not pretend to fit five; a 4x4 panel should use the extra room.
-        assertTrue("4x2 shows several rows", DeadlineScheduleWidget.rowsForHeight(140) >= 1);
-        assertTrue("and more than one", DeadlineScheduleWidget.rowsForHeight(200) >= 2);
-        assertTrue("taller panel shows more",
+        // A 4x2 panel is roughly 120-160dp on most launchers and must show more than one
+        // lesson — that is the whole point of the compact geometry. A taller panel gets
+        // progressively more, up to the cap.
+        assertTrue("4x2 (120dp) shows at least one row",
+                DeadlineScheduleWidget.rowsForHeight(120) >= 1);
+        assertTrue("4x2 (140dp) shows two or more",
+                DeadlineScheduleWidget.rowsForHeight(140) >= 2);
+        assertTrue("4x2 (160dp) shows two or more",
+                DeadlineScheduleWidget.rowsForHeight(160) >= 2);
+        assertTrue("taller panel shows more than a 4x2 one",
                 DeadlineScheduleWidget.rowsForHeight(300) > DeadlineScheduleWidget.rowsForHeight(140));
-        assertEquals("never zero rows", 1, DeadlineScheduleWidget.rowsForHeight(97));
+        assertEquals("never zero rows", 1, DeadlineScheduleWidget.rowsForHeight(1));
         assertEquals("a launcher reporting nothing gets the 4x2 default",
                 DeadlineScheduleWidget.DEFAULT_ROWS, DeadlineScheduleWidget.rowsForHeight(0));
         assertEquals("a huge panel is still capped", 8, DeadlineScheduleWidget.rowsForHeight(4000));
+    }
+
+    @Test
+    public void shortPanelsUseTheCompactChrome() {
+        // The 4x2 strip must be recognised as compact, or it pays 96dp of chrome and fits a
+        // single lesson — the bug this geometry exists to prevent.
+        assertTrue("140dp is a 4x2 strip", DeadlineScheduleWidget.isCompact(140));
+        assertTrue("180dp still compact", DeadlineScheduleWidget.isCompact(180));
+        assertFalse("300dp is not compact", DeadlineScheduleWidget.isCompact(300));
+        assertFalse("an unreported size is not compact", DeadlineScheduleWidget.isCompact(0));
+        // Concretely: a 140dp strip must fit two rows, a 300dp panel more than that.
+        assertEquals(2, DeadlineScheduleWidget.rowsForHeight(140));
+        assertTrue(DeadlineScheduleWidget.rowsForHeight(340) >= 5);
+    }
+
+    @Test
+    public void finishedLessonsAreDroppedFromTheWidget() {
+        long firstWeek = mondayStart();
+        long now = thisWeek(1, 15, 0);
+        Lesson morning = lesson("上午课", 1, 1, 1);      // 08:00-08:45, over by 15:00
+        Lesson afternoon = lesson("下午课", 1, 5, 1);    // 14:00-14:45, over by 15:00
+        List<Lesson> all = java.util.Arrays.asList(morning, afternoon);
+        List<Lesson> left = DeadlineScheduleWidget.remaining(all, null, now, firstWeek,
+                SECTIONS, false);
+        assertEquals("both finished lessons are dropped", 0, left.size());
+
+        // An in-progress lesson is kept: "what am I in right now" is the widget's question.
+        // The afternoon lesson is still ahead, so it legitimately stays too.
+        long during = thisWeek(1, 8, 10);
+        List<Lesson> withCurrent = DeadlineScheduleWidget.remaining(all, morning, during,
+                firstWeek, SECTIONS, false);
+        assertEquals("in-progress plus still-ahead", 2, withCurrent.size());
+        assertTrue(withCurrent.contains(morning));
+
+        // Once the afternoon lesson is the only one left, that is what remains.
+        List<Lesson> onlyAfternoon = DeadlineScheduleWidget.remaining(all, null,
+                thisWeek(1, 12, 0), firstWeek, SECTIONS, false);
+        assertEquals(1, onlyAfternoon.size());
+        assertEquals("下午课", onlyAfternoon.get(0).name);
+    }
+
+    @Test
+    public void tomorrowsListIsNeverFiltered() {
+        // Tomorrow is entirely in the future, so the filter must not touch it.
+        long firstWeek = mondayStart();
+        List<Lesson> lessons = java.util.Arrays.asList(lesson("周二课", 2, 1, 1));
+        List<Lesson> result = DeadlineScheduleWidget.remaining(lessons, null,
+                thisWeek(1, 22, 0), firstWeek, SECTIONS, true);
+        assertEquals("tomorrow keeps its lessons", 1, result.size());
     }
 
     @Test

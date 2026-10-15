@@ -530,7 +530,7 @@ public final class MainActivity extends BaseActivity implements App.ServiceListe
         panel.addView(open, new LinearLayout.LayoutParams(-1, -2));
 
         TextView caveat = GlassUi.body(this,
-                "课表由学校教务系统同步，可能有延迟或临时调整，请以学习通内课表为准", 11);
+                "课表由学校教务系统同步，可能有延迟或临时调整，请以教务系统为准", 11);
         caveat.setPadding(dp(4), dp(8), dp(4), dp(4));
         panel.addView(caveat, new LinearLayout.LayoutParams(-1, -2));
         return panel;

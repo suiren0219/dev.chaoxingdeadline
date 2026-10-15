@@ -112,6 +112,15 @@ public final class ChaoxingHook extends XposedModule {
             "https://kb.chaoxing.com/curriculum/getOtherLessons";
     /** Pause between weeks of a semester sweep; one request per week is already gentle. */
     private static final long WEEK_SWEEP_PAUSE_MS = 1200L;
+    /**
+     * After the first empty week, keep probing this far before giving up.
+     *
+     * One empty week is usually a holiday (国庆, exam week) and the term continues, so
+     * stopping at the first one truncates the semester. Probing a few more weeks past it
+     * costs a handful of requests once and cannot lose the tail of a term; two consecutive
+     * empties inside this span still end the sweep immediately.
+     */
+    private static final int EMPTY_PROBE_WEEKS = 4;
     /** Upper bound on a semester sweep when the payload does not state a maxWeek. */
     private static final int DEFAULT_MAX_WEEK = 24;
     /** maxWeek reported by the last timetable payload; the real semester length. */
@@ -781,7 +790,11 @@ public final class ChaoxingHook extends XposedModule {
             // full-semester sweep. The sweep asks for as many weeks as the endpoint will
             // answer, not a fixed number, because maxWeek differs per school.
             final boolean fullSemester = intent.getBooleanExtra("whole_semester", false);
-            final int to = fullSemester ? Math.max(DEFAULT_MAX_WEEK, maxWeekSeen)
+            // A semester sweep runs to the declared length plus a probe margin, so the loop
+            // can discover the real end (and get past a holiday) instead of being cut off
+            // at maxWeek before it can tell the difference.
+            final int to = fullSemester
+                    ? Math.max(DEFAULT_MAX_WEEK, maxWeekSeen + EMPTY_PROBE_WEEKS + 1)
                     : (upToWeek > 0 ? Math.max(from, upToWeek) : from);
             log(Log.INFO, TAG, "timetable refresh for weeks " + from + "-" + to
                     + (fullSemester ? " (semester sweep)" : ""));
@@ -1931,26 +1944,52 @@ public final class ChaoxingHook extends XposedModule {
     }
 
     /**
-     * Sweeps one teaching week after another until the endpoint stops returning lessons,
-     * then broadcasts what it collected. Runs on a worker thread.
+     * Sweeps one teaching week after another until the semester ends, then broadcasts what
+     * it collected. Runs on a worker thread.
      *
      * The endpoint cannot answer a whole semester in one call — verified against the live
      * service: without a week it returns the current week only, and each lesson comes back
      * stamped with just that week. Sweeping is what reconstructs the semester, and the
      * module merges the per-week answers by lesson slot with unioned week lists.
      *
+     * Two things make a repeat sweep cheap:
+     *
+     * <ul>
+     *   <li><b>It skips weeks already pulled this session.</b> Those answers are in
+     *       {@link #SWEPT_WEEKS}, and asking again would both waste a request and — because
+     *       {@link #fetchUrl} dedups by URL+body — come back as a cache hit with no lesson
+     *       count, which the loop would misread as an empty week (that bug made every
+     *       second sweep stop after two weeks).</li>
+     *   <li><b>It stops where the term stops, not at a fixed ceiling.</b> The end is found
+     *       by walking past one empty week (holidays are real) and giving up only after
+     *       {@link #EMPTY_PROBE_WEEKS} consecutive empties — or two, once the payload's own
+     *       maxWeek has already been passed, since then the term is provably over.</li>
+     * </ul>
+     *
      * @param fromWeek first week to pull (1-based)
      * @param maxWeek  hard stop, so a wrong maxWeek in a payload cannot spawn a long loop
-     * @return the number of weeks that returned lessons
+     * @return the number of weeks pulled in this sweep that returned lessons
      */
     private int sweepTimetableWeeks(int fromWeek, int maxWeek) {
         int weeksWithLessons = 0;
         int emptyRun = 0;
+        int highest = Math.max(1, fromWeek);
+        int emptyRunLimit = EMPTY_PROBE_WEEKS;
+        // The semester length stated by the payload bounds the "probe past an empty week"
+        // patience: beyond maxWeek there is nothing to find, so two empties are conclusive.
+        int declaredMax = maxWeekSeen > 0 ? maxWeekSeen : 0;
         for (int week = Math.max(1, fromWeek); week <= maxWeek; week++) {
             if (System.currentTimeMillis() < antiSpiderUntil) {
                 log(Log.WARN, TAG, "stopped timetable sweep at week " + week
                         + ": antispider cooldown active");
                 break;
+            }
+            synchronized (SWEPT_WEEKS) {
+                if (SWEPT_WEEKS.contains(week)) {
+                    // Already pulled in this process; its lessons are merged already, so it
+                    // neither counts toward the empty run nor needs another request.
+                    continue;
+                }
             }
             try {
                 fetchTimetable(week);
@@ -1966,12 +2005,15 @@ public final class ChaoxingHook extends XposedModule {
             if (returned > 0) {
                 weeksWithLessons++;
                 emptyRun = 0;
+                highest = week;
             } else {
-                // Two consecutive empty weeks mean the semester is over; a single empty
-                // week alone can be a holiday (国庆, exam week) in the middle of a term.
                 emptyRun++;
-                if (emptyRun >= 2) {
-                    log(Log.INFO, TAG, "timetable sweep reached the end at week " + week);
+                if (declaredMax > 0 && week >= declaredMax) {
+                    emptyRunLimit = 2;
+                }
+                if (emptyRun >= emptyRunLimit) {
+                    log(Log.INFO, TAG, "timetable sweep reached the end at week " + week
+                            + " (" + emptyRun + " empty weeks in a row)");
                     break;
                 }
             }
@@ -1982,6 +2024,9 @@ public final class ChaoxingHook extends XposedModule {
                 break;
             }
         }
+        log(Log.INFO, TAG, "timetable sweep finished: " + weeksWithLessons
+                + " week(s) with lessons, highest week " + highest
+                + ", semester length " + (declaredMax > 0 ? declaredMax : maxWeek));
         return weeksWithLessons;
     }
 

@@ -32,6 +32,8 @@ import java.util.List;
 public final class ScheduleActivity extends BaseActivity {
     private static final int MAX_WEEK = 30;
     private static final long REFRESH_GUARD_MS = 10_000L;
+    /** 导入课表文件的选择器请求码。 */
+    private static final int REQUEST_IMPORT_TIMETABLE = 0x7A11;
     private static final String[] TAB_LABELS = {"今日", "周", "设置"};
     private static final int TAB_TODAY = 0;
     private static final int TAB_WEEK = 1;
@@ -162,7 +164,7 @@ public final class ScheduleActivity extends BaseActivity {
             // The caveat belongs next to the data it describes: timetables sync from the
             // school's system, so they can lag behind a room change or a cancellation.
             TextView stamp = text("更新于 " + DateText.deadlineTime(updatedAt)
-                    + " · 来自学校教务系统同步，可能有延迟，请以学习通内课表为准",
+                    + " · 来自学校教务系统同步，可能有延迟，请以教务系统为准",
                     11, false, UiTheme.muted(this));
             stamp.setPadding(dp(4), dp(2), dp(4), dp(8));
             content.addView(stamp, new LinearLayout.LayoutParams(-1, -2));
@@ -290,6 +292,11 @@ public final class ScheduleActivity extends BaseActivity {
                         : "逐周取回整学期，需要一点时间");
         allWeeks.setOnClickListener(v -> requestWholeSemester());
         data.addView(allWeeks, new LinearLayout.LayoutParams(-1, -2));
+        data.addView(GlassUi.actionRow(this, "从文件导入课表",
+                "选 JSON（本工具导出的整学期）或 ICS（日历文件）直接导入，不必逐周拉取"),
+                new LinearLayout.LayoutParams(-1, -2));
+        data.getChildAt(data.getChildCount() - 1)
+                .setOnClickListener(v -> pickTimetableFile());
         content.addView(data, groupParams());
 
         content.addView(GlassUi.sectionLabel(this, "跳转"), new LinearLayout.LayoutParams(-1, -2));
@@ -321,6 +328,94 @@ public final class ScheduleActivity extends BaseActivity {
         Toast.makeText(this, known > 0
                 ? "已请求整学期课表（约 " + known + " 周），稍后自动更新"
                 : "已请求整学期课表，稍后自动更新", Toast.LENGTH_SHORT).show();
+    }
+
+    /**
+     * 让用户挑一个课表文件（JSON 或 ICS）。
+     *
+     * 选择器放开的类型：JSON 是本工具导出的整学期数据，ICS 是日历文件。部分文件管理器
+     * 对 application/json 的映射不一致，所以同时声明几种 MIME。
+     */
+    private void pickTimetableFile() {
+        Intent intent = new Intent(Intent.ACTION_OPEN_DOCUMENT)
+                .addCategory(Intent.CATEGORY_OPENABLE)
+                .setType("*/*")
+                .putExtra(Intent.EXTRA_MIME_TYPES,
+                        new String[]{"application/json", "text/calendar", "text/plain"});
+        try {
+            startActivityForResult(intent, REQUEST_IMPORT_TIMETABLE);
+        } catch (Throwable throwable) {
+            Toast.makeText(this, "无法打开文件选择器", Toast.LENGTH_SHORT).show();
+        }
+    }
+
+    @Override
+    @SuppressWarnings("deprecation")
+    protected void onActivityResult(int requestCode, int resultCode, Intent data) {
+        super.onActivityResult(requestCode, resultCode, data);
+        if (requestCode != REQUEST_IMPORT_TIMETABLE
+                || resultCode != android.app.Activity.RESULT_OK
+                || data == null || data.getData() == null) {
+            return;
+        }
+        importTimetable(data.getData());
+    }
+
+    /**
+     * 读文件、解析、写入。
+     *
+     * 读放在后台线程：整个学期的 JSON 可能有几百 KB，主线程读会在低端机上卡出 ANR。
+     * 解析结果为空时明确告知，而不是静默什么也没发生——用户选了文件却看不到变化，
+     * 会以为功能坏了。
+     */
+    private void importTimetable(final android.net.Uri uri) {
+        String name = uri.getLastPathSegment();
+        Toast.makeText(this, "正在导入…", Toast.LENGTH_SHORT).show();
+        new Thread(() -> {
+            String text;
+            try (java.io.InputStream in = getContentResolver().openInputStream(uri)) {
+                if (in == null) {
+                    runOnUiThread(() -> Toast.makeText(this, "读不到该文件", Toast.LENGTH_SHORT).show());
+                    return;
+                }
+                text = readAll(in);
+            } catch (Throwable throwable) {
+                runOnUiThread(() -> Toast.makeText(this, "读取失败：" + throwable.getClass().getSimpleName(),
+                        Toast.LENGTH_SHORT).show());
+                return;
+            }
+            TimetableImport.Imported imported = TimetableImport.parse(text, name);
+            runOnUiThread(() -> {
+                if (imported == null || imported.lessons.isEmpty()) {
+                    Toast.makeText(this, "没有从文件里认出课表内容（支持 JSON 与 ICS）",
+                            Toast.LENGTH_LONG).show();
+                    return;
+                }
+                DeadlineStore store = new DeadlineStore(this);
+                // replaceLessons 而不是 merge：导入是一份完整课表，按周累积会把旧学期
+                // 残留的课程混进来。用户主动导入，就是要以文件为准。
+                store.replaceLessons(imported.lessons, imported.firstWeekDate,
+                        imported.sectionTimesJson);
+                DeadlineNotifier.scheduleClassReminder(this);
+                DeadlineWidgetProvider.updateAll(this);
+                Toast.makeText(this, "已导入 " + imported.lessons.size() + " 条课程（"
+                        + imported.format + "）", Toast.LENGTH_LONG).show();
+                recreate();
+            });
+        }, "ChaoxingDeadlineTimetableImport").start();
+    }
+
+    private static String readAll(java.io.InputStream in) throws java.io.IOException {
+        java.io.ByteArrayOutputStream out = new java.io.ByteArrayOutputStream();
+        byte[] buffer = new byte[8192];
+        int total = 0;
+        int read;
+        // 上限 8MB：课表文件不可能这么大，超过说明选错了文件。
+        while ((read = in.read(buffer)) > 0 && total < 8 * 1024 * 1024) {
+            out.write(buffer, 0, read);
+            total += read;
+        }
+        return new String(out.toByteArray(), java.nio.charset.StandardCharsets.UTF_8);
     }
 
     // -- chrome --
