@@ -47,6 +47,8 @@ public final class DeadlineReceiver extends BroadcastReceiver {
      */
     public static final String ACTION_REQUEST_REFRESH = "dev.chaoxingdeadline.REQUEST_REFRESH";
     public static final String EXTRA_WEEK = "week";
+    /** Semester length as stated by the curriculum payload (see TimetableParser). */
+    public static final String EXTRA_MAX_WEEK = "max_week";
     public static final String EXTRA_APPWIDGET_ID = "appwidget_id";
     public static final String EXTRA_REASON = "reason";
     public static final String EXTRA_ITEM_B64 = "item_b64";
@@ -195,7 +197,8 @@ public final class DeadlineReceiver extends BroadcastReceiver {
                     new DeadlineStore(context).mergeLessons(lessons,
                             intent.getLongExtra("first_week_date", 0L),
                             intent.getStringExtra("section_times"),
-                            intent.getIntExtra(EXTRA_WEEK, 0));
+                            intent.getIntExtra(EXTRA_WEEK, 0),
+                            intent.getIntExtra(EXTRA_MAX_WEEK, 0));
                     DeadlineWidgetProvider.updateAll(context);
                     DeadlineScheduleWidget.updateAll(context);
                     context.sendBroadcast(new Intent(ACTION_REFRESH).setPackage(context.getPackageName()));

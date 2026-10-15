@@ -49,11 +49,22 @@ public final class TimetableParser {
         public final long firstWeekDate;
         /** School section-time table as raw JSON text, e.g. ["8:00-8:45", …]. */
         public final String sectionTimesJson;
+        /**
+         * Semester length as stated by the curriculum, 0 when absent. The mobile
+         * endpoint reports maxWeek, which is how a sweep knows where to stop instead of
+         * guessing a bound.
+         */
+        public final int maxWeek;
+        /** Teaching week this payload answers for, 0 when the response did not say. */
+        public final int currentWeek;
 
-        Result(List<Lesson> lessons, long firstWeekDate, String sectionTimesJson) {
+        Result(List<Lesson> lessons, long firstWeekDate, String sectionTimesJson,
+               int maxWeek, int currentWeek) {
             this.lessons = lessons;
             this.firstWeekDate = firstWeekDate;
             this.sectionTimesJson = sectionTimesJson;
+            this.maxWeek = maxWeek;
+            this.currentWeek = currentWeek;
         }
     }
 
@@ -101,10 +112,13 @@ public final class TimetableParser {
             if (times != null && times.length() > 0) {
                 sectionTimesJson = times.toString();
             }
+            int maxWeek = firstInt(curriculum, "maxWeek", "maxweek", "max_week");
+            int currentWeek = firstInt(curriculum, "realCurrentWeek", "currentWeek",
+                    "realcurrentweek", "currentweek");
             if (lessons.isEmpty()) {
                 return null;
             }
-            return new Result(lessons, firstWeekDate, sectionTimesJson);
+            return new Result(lessons, firstWeekDate, sectionTimesJson, maxWeek, currentWeek);
         } catch (Throwable ignored) {
             return null;
         }

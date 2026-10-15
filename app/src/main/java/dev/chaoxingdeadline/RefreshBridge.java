@@ -57,8 +57,26 @@ public final class RefreshBridge {
         }
     }
 
-    /** Highest teaching week a single sweep may pull; bounds the request count. */
-    public static final int MAX_SWEEP_WEEK = 20;
+    /**
+     * Asks the host to sweep the whole semester. "Whole" is resolved on the host side
+     * against the curriculum's own maxWeek, because the semester length differs per
+     * school and the module should not have to guess it.
+     */
+    public static void requestWholeSemester(Context context) {
+        try {
+            Intent intent = new Intent(DeadlineReceiver.ACTION_REQUEST_REFRESH);
+            intent.setPackage(TARGET_PACKAGE);
+            intent.putExtra(EXTRA_WHOLE_SEMESTER, true);
+            intent.putExtra(DeadlineReceiver.EXTRA_REASON, "moduleRequest");
+            BridgeAuth.attach(context, intent);
+            context.sendBroadcast(intent);
+        } catch (Throwable ignored) {
+        }
+    }
+
+    /** Highest teaching week a manual sweep may pull when the host knows no bound. */
+    public static final int MAX_SWEEP_WEEK = 24;
 
     private static final String EXTRA_THROUGH_WEEK = "through_week";
+    private static final String EXTRA_WHOLE_SEMESTER = "whole_semester";
 }

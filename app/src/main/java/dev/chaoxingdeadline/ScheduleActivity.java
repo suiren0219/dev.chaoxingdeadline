@@ -30,8 +30,6 @@ import java.util.List;
  * {@link RefreshBridge} 请求宿主（学习通进程）重新拉取。
  */
 public final class ScheduleActivity extends BaseActivity {
-    private static final String[] DAY_NAMES = {"周一", "周二", "周三", "周四", "周五", "周六", "周日"};
-    private static final int CELL_HEIGHT_DP = 52;
     private static final int MAX_WEEK = 30;
     private static final long REFRESH_GUARD_MS = 10_000L;
     private static final String[] TAB_LABELS = {"今日", "周", "设置"};
@@ -175,7 +173,7 @@ public final class ScheduleActivity extends BaseActivity {
     private void buildTodayTab(LinearLayout content, List<Lesson> today, Lesson current,
                                int currentWeek, long firstWeekDate, String sectionTimes, long now) {
         int day = ScheduleMath.todayDayOfWeek(now);
-        String head = DAY_NAMES[day - 1] + " · " + (currentWeek > 0 ? "第 " + currentWeek + " 周" : "寒暑假")
+        String head = TimetableViews.DAY_NAMES[day - 1] + " · " + (currentWeek > 0 ? "第 " + currentWeek + " 周" : "寒暑假")
                 + " · " + today.size() + " 节课";
         content.addView(GlassUi.sectionLabel(this, head), new LinearLayout.LayoutParams(-1, -2));
 
@@ -284,7 +282,9 @@ public final class ScheduleActivity extends BaseActivity {
         data.addView(refresh, new LinearLayout.LayoutParams(-1, -2));
 
         View allWeeks = GlassUi.actionRow(this, "获取整学期课表",
-                "逐周取回 1-" + Math.min(20, MAX_WEEK) + " 周，需要一点时间");
+                store.scheduleMaxWeek() > 0
+                        ? "逐周取回整学期（共 " + store.scheduleMaxWeek() + " 周），需要一点时间"
+                        : "逐周取回整学期，需要一点时间");
         allWeeks.setOnClickListener(v -> requestWholeSemester());
         data.addView(allWeeks, new LinearLayout.LayoutParams(-1, -2));
         content.addView(data, groupParams());
@@ -303,7 +303,7 @@ public final class ScheduleActivity extends BaseActivity {
         content.addView(links, groupParams());
     }
 
-    /** Asks the host for every teaching week up to a sane bound, in one request. */
+    /** Asks the host for the whole semester, in one request. */
     private void requestWholeSemester() {
         long now = System.currentTimeMillis();
         if (now < refreshBlockedUntil) {
@@ -311,11 +311,13 @@ public final class ScheduleActivity extends BaseActivity {
             return;
         }
         refreshBlockedUntil = now + REFRESH_GUARD_MS;
-        int weeks = Math.min(RefreshBridge.MAX_SWEEP_WEEK, MAX_WEEK);
-        // One broadcast, not one per week: the host sweeps them serially with a pause,
-        // so the endpoint never sees a burst.
-        RefreshBridge.requestWeeksThrough(this, weeks);
-        Toast.makeText(this, "已请求 1-" + weeks + " 周课表，稍后自动更新", Toast.LENGTH_SHORT).show();
+        // One broadcast; the host sweeps week by week with a pause between requests and
+        // stops at the curriculum's own maxWeek, so the endpoint never sees a burst.
+        RefreshBridge.requestWholeSemester(this);
+        int known = new DeadlineStore(this).scheduleMaxWeek();
+        Toast.makeText(this, known > 0
+                ? "已请求整学期课表（约 " + known + " 周），稍后自动更新"
+                : "已请求整学期课表，稍后自动更新", Toast.LENGTH_SHORT).show();
     }
 
     // -- chrome --
@@ -384,121 +386,8 @@ public final class ScheduleActivity extends BaseActivity {
 
     private View gridView(TimetableGrid.Grid grid, int week, int currentWeek, Lesson current,
                           long firstWeekDate, String sectionTimes, long now) {
-        LinearLayout table = new LinearLayout(this);
-        table.setOrientation(LinearLayout.HORIZONTAL);
-        table.setBackground(UiTheme.cardBg(this, 16));
-        table.setPadding(dp(4), dp(4), dp(4), dp(4));
-
-        LinearLayout axis = new LinearLayout(this);
-        axis.setOrientation(LinearLayout.VERTICAL);
-        axis.addView(axisCorner(), axisParams());
-        for (int section = 1; section <= grid.rows; section++) {
-            axis.addView(axisLabel(section, sectionTimes), axisParams());
-        }
-        table.addView(axis, new LinearLayout.LayoutParams(dp(28), -2));
-
-        int todayDay = ScheduleMath.todayDayOfWeek(now);
-        for (int day = 1; day <= 7; day++) {
-            LinearLayout column = new LinearLayout(this);
-            column.setOrientation(LinearLayout.VERTICAL);
-            boolean isToday = currentWeek > 0 && week == currentWeek && day == todayDay;
-            column.addView(dayHeader(day, week, firstWeekDate, isToday), headerParams());
-            for (TimetableGrid.Cell cell : grid.column(day)) {
-                if (cell.isBlock()) {
-                    column.addView(blockView(cell, current, week, currentWeek,
-                            firstWeekDate, sectionTimes, now), cellParams(cell));
-                } else {
-                    column.addView(emptyCell(isToday), emptyParams());
-                }
-            }
-            table.addView(column, new LinearLayout.LayoutParams(0, -2, 1f));
-        }
-        return table;
-    }
-
-    private View axisCorner() {
-        TextView view = text("节", 9, false, UiTheme.muted(this));
-        view.setGravity(Gravity.CENTER);
-        return view;
-    }
-
-    private View axisLabel(int section, String sectionTimes) {
-        LinearLayout box = new LinearLayout(this);
-        box.setOrientation(LinearLayout.VERTICAL);
-        box.setGravity(Gravity.CENTER);
-        TextView number = text(String.valueOf(section), 11, true, UiTheme.muted(this));
-        number.setGravity(Gravity.CENTER);
-        box.addView(number, new LinearLayout.LayoutParams(-1, 0, 1f));
-        TextView clock = text(ScheduleMath.formatMinutes(
-                ScheduleMath.sectionStartMinutes(sectionTimes, section)), 8, false, UiTheme.muted(this));
-        clock.setGravity(Gravity.CENTER);
-        box.addView(clock, new LinearLayout.LayoutParams(-1, 0, 1f));
-        return box;
-    }
-
-    private View dayHeader(int day, int week, long firstWeekDate, boolean isToday) {
-        LinearLayout header = new LinearLayout(this);
-        header.setOrientation(LinearLayout.VERTICAL);
-        header.setGravity(Gravity.CENTER);
-        if (isToday) {
-            header.setBackground(UiTheme.fillOnly(this, UiTheme.accent(this), dp(8)));
-        }
-        TextView name = text(DAY_NAMES[day - 1], 10, true,
-                isToday ? Color.WHITE : UiTheme.muted(this));
-        name.setGravity(Gravity.CENTER);
-        header.addView(name, new LinearLayout.LayoutParams(-1, 0, 1f));
-        TextView date = text(isToday ? "今天" : dateLabel(firstWeekDate, week, day), 8, false,
-                isToday ? Color.WHITE : UiTheme.muted(this));
-        date.setGravity(Gravity.CENTER);
-        header.addView(date, new LinearLayout.LayoutParams(-1, 0, 1f));
-        return header;
-    }
-
-    private View emptyCell(boolean isToday) {
-        View view = new View(this);
-        view.setBackgroundColor(isToday ? todayTint() : UiTheme.divider(this));
-        return view;
-    }
-
-    private View blockView(TimetableGrid.Cell cell, Lesson current, int week, int currentWeek,
-                           long firstWeekDate, String sectionTimes, long now) {
-        Lesson lesson = cell.lesson;
-        int[] colors = courseColors(lesson.name);
-        boolean isCurrent = current != null && current.id != null && current.id.equals(lesson.id);
-        boolean isPast = false;
-        if (currentWeek > 0 && week == currentWeek) {
-            long end = ScheduleMath.lessonEndAt(firstWeekDate, currentWeek, lesson.dayOfWeek,
-                    lesson.beginSection, lesson.sections, sectionTimes);
-            isPast = end > 0L && now >= end;
-        }
-
-        LinearLayout block = new LinearLayout(this);
-        block.setOrientation(LinearLayout.VERTICAL);
-        block.setPadding(dp(3), dp(3), dp(3), dp(3));
-        block.setGravity(Gravity.TOP | Gravity.CENTER_HORIZONTAL);
-        int radius = dp(6);
-        block.setBackground(isCurrent
-                ? UiTheme.rounded(this, colors[0], radius, UiTheme.accent(this))
-                : UiTheme.fillOnly(this, colors[0], radius));
-        block.setAlpha(isPast ? 0.55f : 1f);
-        block.setOnClickListener(v -> showLessonDialog(lesson));
-
-        TextView name = text(lesson.name, 9, true, colors[1]);
-        name.setMaxLines(2);
-        name.setEllipsize(TextUtils.TruncateAt.END);
-        name.setGravity(Gravity.CENTER_HORIZONTAL);
-        block.addView(name, new LinearLayout.LayoutParams(-1, 0, 1f));
-
-        String meta = lesson.location != null && !lesson.location.isEmpty()
-                ? lesson.location : (lesson.teacher == null ? "" : lesson.teacher);
-        if (cell.span >= 2 && !meta.isEmpty()) {
-            TextView metaView = text(meta, 8, false, colors[1]);
-            metaView.setGravity(Gravity.CENTER_HORIZONTAL);
-            metaView.setSingleLine();
-            metaView.setEllipsize(TextUtils.TruncateAt.END);
-            block.addView(metaView, new LinearLayout.LayoutParams(-1, 0, 1f));
-        }
-        return block;
+        return TimetableViews.grid(this, grid, week, currentWeek, current,
+                firstWeekDate, sectionTimes, now, this::showLessonDialog);
     }
 
     // -- empty states --
@@ -576,7 +465,7 @@ public final class ScheduleActivity extends BaseActivity {
 
     private void showLessonDialog(Lesson lesson) {
         String day = lesson.dayOfWeek >= 1 && lesson.dayOfWeek <= 7
-                ? DAY_NAMES[lesson.dayOfWeek - 1] : "周" + lesson.dayOfWeek;
+                ? TimetableViews.DAY_NAMES[lesson.dayOfWeek - 1] : "周" + lesson.dayOfWeek;
         StringBuilder message = new StringBuilder();
         message.append("时间：").append(day).append(" ")
                 .append(ScheduleMath.formatSections(lesson.beginSection, lesson.sections));
@@ -600,25 +489,9 @@ public final class ScheduleActivity extends BaseActivity {
         return UiTheme.courseColors(this, name);
     }
 
-    private int todayTint() {
-        return UiTheme.todayTint(this);
-    }
-
-    private String dateLabel(long firstWeekDate, int week, int day) {
-        if (firstWeekDate <= 0L) {
-            return "";
-        }
-        Calendar calendar = Calendar.getInstance();
-        calendar.setTimeInMillis(firstWeekDate);
-        calendar.add(Calendar.DAY_OF_MONTH, (week - 1) * 7 + (day - 1));
-        return (calendar.get(Calendar.MONTH) + 1) + "/" + calendar.get(Calendar.DAY_OF_MONTH);
-    }
 
     private String weekRangeLabel(long firstWeekDate, int week) {
-        if (firstWeekDate <= 0L) {
-            return "开学时间未知";
-        }
-        return dateLabel(firstWeekDate, week, 1) + " – " + dateLabel(firstWeekDate, week, 7);
+        return TimetableViews.weekRangeLabel(firstWeekDate, week);
     }
 
     private LinearLayout.LayoutParams groupParams() {
@@ -627,27 +500,4 @@ public final class ScheduleActivity extends BaseActivity {
         return p;
     }
 
-    private LinearLayout.LayoutParams headerParams() {
-        LinearLayout.LayoutParams p = new LinearLayout.LayoutParams(-1, dp(38));
-        p.setMargins(dp(1), dp(1), dp(1), dp(2));
-        return p;
-    }
-
-    private LinearLayout.LayoutParams axisParams() {
-        LinearLayout.LayoutParams p = new LinearLayout.LayoutParams(-1, dp(CELL_HEIGHT_DP));
-        p.setMargins(dp(1), dp(1), dp(1), dp(1));
-        return p;
-    }
-
-    private LinearLayout.LayoutParams emptyParams() {
-        LinearLayout.LayoutParams p = new LinearLayout.LayoutParams(-1, dp(CELL_HEIGHT_DP));
-        p.setMargins(dp(1), dp(1), dp(1), dp(1));
-        return p;
-    }
-
-    private LinearLayout.LayoutParams cellParams(TimetableGrid.Cell cell) {
-        LinearLayout.LayoutParams p = new LinearLayout.LayoutParams(-1, cell.span * dp(CELL_HEIGHT_DP));
-        p.setMargins(dp(1), dp(1), dp(1), dp(1));
-        return p;
-    }
 }

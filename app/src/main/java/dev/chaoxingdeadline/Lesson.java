@@ -69,9 +69,24 @@ public final class Lesson {
         if (id != null && !id.isEmpty()) {
             return id;
         }
-        String basis = name + "|" + teacher + "|" + location + "|" + dayOfWeek
-                + "|" + beginSection + "|" + sections;
-        return "lesson_" + Integer.toHexString(basis.toLowerCase(java.util.Locale.ROOT).hashCode());
+        return "lesson_" + Integer.toHexString(slotKey(this).hashCode());
+    }
+
+    /**
+     * Identity of the *slot* a lesson occupies, independent of the server's lesson id.
+     *
+     * The mobile timetable endpoint hands out a different lessonConfigId for the same
+     * class depending on which week you ask for, so merging weekly answers by id would
+     * store one duplicate per week swept. Name + weekday + first section is what actually
+     * identifies the recurring class, and it also covers the case seen in the wild where
+     * two lessons for one course sit in different slots.
+     */
+    public static String slotKey(Lesson lesson) {
+        if (lesson == null) {
+            return "";
+        }
+        String name = lesson.name == null ? "" : lesson.name.trim();
+        return name + "|" + lesson.dayOfWeek + "|" + lesson.beginSection;
     }
 
     public String label() {

@@ -5,6 +5,7 @@ import android.annotation.SuppressLint;
 import android.content.BroadcastReceiver;
 import android.content.Context;
 import android.content.Intent;
+import android.graphics.Color;
 import android.content.IntentFilter;
 import android.content.SharedPreferences;
 import android.content.pm.PackageManager;
@@ -14,6 +15,7 @@ import android.widget.Toast;
 import android.widget.AdapterView;
 import android.widget.ArrayAdapter;
 import android.widget.EditText;
+import android.widget.FrameLayout;
 import android.widget.LinearLayout;
 import android.widget.ScrollView;
 import android.widget.Spinner;
@@ -29,6 +31,7 @@ import android.view.View;
 import java.text.SimpleDateFormat;
 import java.util.Collections;
 import java.util.ArrayList;
+import java.util.Calendar;
 import java.util.Date;
 import java.util.List;
 import java.util.Locale;
@@ -54,11 +57,18 @@ public final class MainActivity extends BaseActivity implements App.ServiceListe
     private TextView countExpired;
     private TextView countBlocked;
     private LinearLayout emptyContainer;
-    private LinearLayout scheduleContainer;
     private EditText searchInput;
     private Spinner typeFilter;
     private String searchQuery = "";
     private String typeFilterValue = "";
+    private static final int TAB_TODAY = 0;
+    private static final int TAB_TIMETABLE = 1;
+    private static final int TAB_MINE = 2;
+    private FrameLayout contentHost;
+    private TextView[] tabTitles = new TextView[3];
+    private int selectedTab = TAB_TODAY;
+    /** Week shown in the 课程表 tab; <= 0 follows the current teaching week. */
+    private int displayedWeek;
     /** "list" (flat) or "week" (grouped by day, next 7 days). */
     private String viewMode = "list";
     private TextView listTab;
@@ -124,63 +134,249 @@ public final class MainActivity extends BaseActivity implements App.ServiceListe
         runOnUiThread(() -> reload(false));
     }
 
+    /**
+     * Three-tab shell: 今日 (date + today's lessons + deadlines), 课程表 (weekly grid),
+     * 我的 (account, data and the settings entry). One glass backdrop behind all three,
+     * with the tab bar pinned at the bottom.
+     */
     private View buildContent() {
+        FrameLayout shell = new FrameLayout(this);
+        shell.addView(GlassUi.backdrop(this), new FrameLayout.LayoutParams(-1, -1));
+
+        LinearLayout page = new LinearLayout(this);
+        page.setOrientation(LinearLayout.VERTICAL);
+        shell.addView(page, new FrameLayout.LayoutParams(-1, -1));
+
+        // Content swaps per tab; the tab bar below stays put.
+        contentHost = new FrameLayout(this);
+        page.addView(contentHost, new LinearLayout.LayoutParams(-1, 0, 1f));
+
+        page.addView(tabBar(), new LinearLayout.LayoutParams(-1, -2));
+        showTab(selectedTab);
+        return shell;
+    }
+
+    /** Bottom tab bar: 今日 / 课程表 / 我的. */
+    private View tabBar() {
+        LinearLayout bar = GlassUi.row(this);
+        bar.setPadding(dp(10), dp(8), dp(10), dp(8));
+        bar.setBackground(UiTheme.glassCard(this, dp(22)));
+
+        tabTitles = new TextView[3];
+        String[][] tabs = {{"\u25a6", "今日"}, {"\u2637", "课程表"}, {"\u25cf", "我的"}};
+        for (int i = 0; i < tabs.length; i++) {
+            final int index = i;
+            LinearLayout tab = GlassUi.column(this);
+            tab.setGravity(Gravity.CENTER);
+            tab.setPadding(0, dp(6), 0, dp(6));
+            TextView glyph = new TextView(this);
+            glyph.setText(tabs[i][0]);
+            glyph.setTextSize(18);
+            glyph.setGravity(Gravity.CENTER);
+            tab.addView(glyph, new LinearLayout.LayoutParams(-1, -2));
+            TextView label = new TextView(this);
+            label.setText(tabs[i][1]);
+            label.setTextSize(11);
+            label.setGravity(Gravity.CENTER);
+            label.setPadding(0, dp(2), 0, 0);
+            tab.addView(label, new LinearLayout.LayoutParams(-1, -2));
+            tab.setOnClickListener(v -> showTab(index));
+            tabTitles[i] = label;
+            LinearLayout.LayoutParams p = new LinearLayout.LayoutParams(0, -2, 1f);
+            p.setMargins(dp(4), 0, dp(4), 0);
+            bar.addView(tab, p);
+        }
+        LinearLayout.LayoutParams barParams = new LinearLayout.LayoutParams(-1, -2);
+        barParams.setMargins(dp(12), 0, dp(12), dp(12));
+        bar.setLayoutParams(barParams);
+        return bar;
+    }
+
+    /** Swaps the content area and repaints the tab labels. */
+    private void showTab(int index) {
+        selectedTab = index;
+        for (int i = 0; i < tabTitles.length; i++) {
+            if (tabTitles[i] == null) {
+                continue;
+            }
+            boolean active = i == index;
+            tabTitles[i].setTextColor(active ? UiTheme.accent(this) : UiTheme.muted(this));
+            tabTitles[i].setTypeface(null, active
+                    ? android.graphics.Typeface.BOLD : android.graphics.Typeface.NORMAL);
+        }
+        if (contentHost == null) {
+            return;
+        }
+        contentHost.removeAllViews();
+        View content = index == TAB_TODAY ? buildTodayTab()
+                : index == TAB_TIMETABLE ? buildTimetableTab() : buildMineTab();
+        contentHost.addView(content, new FrameLayout.LayoutParams(-1, -1));
+    }
+
+    /** Page frame: title (optional) plus the padded content column below it. */
+    private LinearLayout scaffold(String title, String subtitle) {
+        LinearLayout root = GlassUi.column(this);
+        root.setPadding(dp(16), statusBarHeight() + dp(10), dp(16), 0);
+        if (title != null && !title.isEmpty()) {
+            root.addView(GlassUi.title(this, title, 24), new LinearLayout.LayoutParams(-1, -2));
+            if (subtitle != null && !subtitle.isEmpty()) {
+                TextView sub = GlassUi.body(this, subtitle, 13);
+                sub.setPadding(0, dp(4), 0, 0);
+                root.addView(sub, new LinearLayout.LayoutParams(-1, -2));
+            }
+        }
+        return root;
+    }
+
+    /** A scrollable body inside a scaffold. */
+    private LinearLayout scrollBody(LinearLayout page) {
         ScrollView scroll = new ScrollView(this);
-        scroll.setBackgroundColor(UiTheme.background(this));
-        scroll.setFillViewport(true);
+        scroll.setVerticalScrollBarEnabled(false);
+        LinearLayout body = GlassUi.column(this);
+        body.setPadding(0, dp(12), 0, dp(12));
+        scroll.addView(body, new ScrollView.LayoutParams(-1, -2));
+        page.addView(scroll, new LinearLayout.LayoutParams(-1, 0, 1f));
+        return body;
+    }
 
-        LinearLayout root = new LinearLayout(this);
-        root.setOrientation(LinearLayout.VERTICAL);
-        root.setPadding(dp(20), statusBarHeight() + dp(12), dp(20), dp(24));
+    /**
+     * 今日: the date, then today's lessons, then the deadline list. Landing here is what
+     * makes the day's schedule the first thing seen on opening the app.
+     */
+    private View buildTodayTab() {
+        LinearLayout page = scaffold(null, null);
+        Calendar calendar = Calendar.getInstance();
+        String[] weekdays = {"", "周日", "周一", "周二", "周三", "周四", "周五", "周六"};
+        page.addView(GlassUi.title(this,
+                "今天是" + weekdays[calendar.get(Calendar.DAY_OF_WEEK)], 26),
+                new LinearLayout.LayoutParams(-1, -2));
+        TextView date = GlassUi.body(this, String.format(Locale.CHINA, "%d年%d月%d日",
+                calendar.get(Calendar.YEAR), calendar.get(Calendar.MONTH) + 1,
+                calendar.get(Calendar.DAY_OF_MONTH)), 16);
+        date.setPadding(0, dp(2), 0, 0);
+        page.addView(date, new LinearLayout.LayoutParams(-1, -2));
 
-        // --- header ---
-        LinearLayout header = hbox();
-        TextView title = text("学习通截止提醒", 26, true, UiTheme.text(this));
-        header.addView(title, new LinearLayout.LayoutParams(0, dp(48), 1f));
-        TextView addBtn = icon("＋", 26, UiTheme.accent(this));
-        addBtn.setOnClickListener(v -> ManualDeadlineDialog.show(this, () -> reload(false)));
-        header.addView(addBtn, new LinearLayout.LayoutParams(dp(42), dp(48)));
-        TextView settingsBtn = icon("⚙", 26, UiTheme.accent(this));
-        settingsBtn.setOnClickListener(v -> startActivity(new Intent(this, SettingsActivity.class)));
-        header.addView(settingsBtn, new LinearLayout.LayoutParams(dp(42), dp(48)));
-        TextView calendarBtn = icon("▦", 24, UiTheme.accent(this));
-        calendarBtn.setOnClickListener(v -> startActivity(new Intent(this, MonthCalendarActivity.class)));
-        header.addView(calendarBtn, new LinearLayout.LayoutParams(dp(42), dp(48)));
-        root.addView(header, new LinearLayout.LayoutParams(-1, -2));
+        LinearLayout body = scrollBody(page);
+        body.addView(todayLessonsBlock(), new LinearLayout.LayoutParams(-1, -2));
+        body.addView(GlassUi.sectionLabel(this, "待办事项"), new LinearLayout.LayoutParams(-1, -2));
+        body.addView(todoBlock(), new LinearLayout.LayoutParams(-1, -2));
+        return page;
+    }
 
-        // --- status card ---
-        LinearLayout status = card();
-        status.setPadding(dp(18), dp(16), dp(18), dp(16));
-        activeBadge = text("", 15, true, UiTheme.text(this));
-        activeBadge.setPadding(0, 0, 0, dp(6));
-        status.addView(activeBadge, new LinearLayout.LayoutParams(-1, -2));
-        statusText = text("", 12, false, UiTheme.muted(this));
-        status.addView(statusText, new LinearLayout.LayoutParams(-1, -2));
-        root.addView(status, marTop(dp(18)));
+    /** Today's lessons as cards. */
+    private View todayLessonsBlock() {
+        LinearLayout box = GlassUi.column(this);
+        DeadlineStore schedule = new DeadlineStore(this);
+        long now = System.currentTimeMillis();
+        long firstWeekDate = schedule.scheduleFirstWeekDate();
+        String sectionTimes = schedule.scheduleSectionTimes();
+        int week = ScheduleMath.currentWeek(now, firstWeekDate);
+        List<Lesson> today = ScheduleMath.todayLessons(schedule.allLessons(), now, firstWeekDate);
+        Lesson current = ScheduleMath.currentLesson(today, now, firstWeekDate, sectionTimes);
 
-        // --- 今日课表 card: the timetable's prominent home-screen entry ---
-        scheduleContainer = new LinearLayout(this);
-        scheduleContainer.setOrientation(LinearLayout.VERTICAL);
-        root.addView(scheduleContainer, marTop(dp(16)));
+        LinearLayout head = GlassUi.row(this);
+        head.addView(GlassUi.body(this, week > 0
+                ? "第 " + week + " 周 · 今天 " + today.size() + " 节课" : "课表未获取", 12),
+                new LinearLayout.LayoutParams(0, -2, 1f));
+        if (current != null) {
+            head.addView(GlassUi.chip(this, "上课中", UiTheme.accent(this), Color.WHITE),
+                    new LinearLayout.LayoutParams(-2, -2));
+        }
+        box.addView(head, new LinearLayout.LayoutParams(-1, -2));
 
-        // --- stat chips ---
-        LinearLayout stats = hbox();
+        if (today.isEmpty()) {
+            TextView empty = GlassUi.body(this, schedule.scheduleUpdatedAt() > 0L
+                    ? "今天没有课" : "还没有课表数据，去「课程表」标签获取", 13);
+            empty.setPadding(0, dp(8), 0, 0);
+            box.addView(empty, new LinearLayout.LayoutParams(-1, -2));
+            return box;
+        }
+        for (Lesson lesson : today) {
+            box.addView(todayLessonCard(lesson, current, week, firstWeekDate, sectionTimes, now),
+                    marTop(dp(8)));
+        }
+        return box;
+    }
+
+    private View todayLessonCard(Lesson lesson, Lesson current, int week, long firstWeekDate,
+                                 String sectionTimes, long now) {
+        boolean isCurrent = current != null && current.id != null && current.id.equals(lesson.id);
+        long start = ScheduleMath.lessonStartAt(firstWeekDate, week, lesson.dayOfWeek,
+                lesson.beginSection, sectionTimes);
+        long end = ScheduleMath.lessonEndAt(firstWeekDate, week, lesson.dayOfWeek,
+                lesson.beginSection, lesson.sections, sectionTimes);
+        boolean isPast = end > 0L && now >= end;
+        int[] colors = UiTheme.courseColors(this, lesson.name);
+
+        LinearLayout panel = GlassUi.panel(this);
+        panel.setPadding(dp(14), dp(12), dp(14), dp(12));
+        LinearLayout body = GlassUi.row(this);
+        View strip = new View(this);
+        strip.setBackground(UiTheme.fillOnly(this, colors[1], dp(2)));
+        LinearLayout.LayoutParams stripParams = new LinearLayout.LayoutParams(dp(4), -1);
+        stripParams.setMargins(0, 0, dp(10), 0);
+        body.addView(strip, stripParams);
+
+        LinearLayout texts = GlassUi.column(this);
+        TextView name = GlassUi.title(this, lesson.name, 16);
+        name.setAlpha(isPast && !isCurrent ? 0.6f : 1f);
+        texts.addView(name, new LinearLayout.LayoutParams(-1, -2));
+        String range = (start > 0L ? DateText.clock(start) : "--:--")
+                + "–" + (end > 0L ? DateText.clock(end) : "--:--");
+        TextView time = GlassUi.body(this, range + " · "
+                + ScheduleMath.formatSections(lesson.beginSection, lesson.sections), 13);
+        time.setPadding(0, dp(3), 0, 0);
+        texts.addView(time, new LinearLayout.LayoutParams(-1, -2));
+        String label = lesson.label();
+        if (!label.isEmpty()) {
+            TextView place = GlassUi.body(this, label, 12);
+            place.setPadding(0, dp(2), 0, 0);
+            texts.addView(place, new LinearLayout.LayoutParams(-1, -2));
+        }
+        body.addView(texts, new LinearLayout.LayoutParams(0, -2, 1f));
+        body.addView(GlassUi.chip(this, isCurrent ? "上课中" : (isPast ? "已结束" : "未开始"),
+                        isCurrent ? UiTheme.accent(this) : UiTheme.muted(this), Color.WHITE),
+                new LinearLayout.LayoutParams(-2, -2));
+        panel.addView(body, new LinearLayout.LayoutParams(-1, -2));
+        panel.setOnClickListener(v -> showLessonDetail(lesson));
+        return panel;
+    }
+
+    private void showLessonDetail(Lesson lesson) {
+        StringBuilder message = new StringBuilder();
+        message.append("周次：").append(lesson.weeks == null || lesson.weeks.isEmpty()
+                ? "每周" : lesson.weeks + " 周");
+        message.append("\n节次：").append(ScheduleMath.formatSections(
+                lesson.beginSection, lesson.sections));
+        String label = lesson.label();
+        if (!label.isEmpty()) {
+            message.append("\n地点／教师：").append(label);
+        }
+        new android.app.AlertDialog.Builder(this)
+                .setTitle(lesson.name)
+                .setMessage(message.toString())
+                .setPositiveButton("知道了", null)
+                .show();
+    }
+
+    /** Stat chips, filters and the deadline list — the 今日 tab's lower half. */
+    private View todoBlock() {
+        LinearLayout box = GlassUi.column(this);
+
+        LinearLayout stats = GlassUi.row(this);
         countPending = new TextView(this);
         countExpired = new TextView(this);
         countBlocked = new TextView(this);
-        stats.addView(statChip("⏳", "待办", countPending), chipParams(1f));
+        stats.addView(statChip("\u23f3", "待办", countPending), chipParams(1f));
         stats.addView(space(dp(10)));
-        stats.addView(statChip("✓", "已完成", countExpired), chipParams(1f));
+        stats.addView(statChip("\u2713", "已完成", countExpired), chipParams(1f));
         stats.addView(space(dp(10)));
-        stats.addView(statChip("⊘", "已屏蔽", countBlocked), chipParams(1f));
-        root.addView(stats, marTop(dp(16)));
+        stats.addView(statChip("\u2298", "已屏蔽", countBlocked), chipParams(1f));
+        box.addView(stats, new LinearLayout.LayoutParams(-1, -2));
 
-        // --- filter bar ---
-        LinearLayout filterBar = new LinearLayout(this);
-        filterBar.setOrientation(LinearLayout.HORIZONTAL);
-        filterBar.setGravity(Gravity.CENTER_VERTICAL);
+        LinearLayout filterBar = hbox();
         filterBar.setPadding(dp(14), dp(9), dp(14), dp(9));
-        filterBar.setBackground(UiTheme.cardBg(this, 14));
+        filterBar.setBackground(UiTheme.glassCard(this, dp(14)));
         searchInput = new EditText(this);
         searchInput.setHint("搜索标题或课程");
         searchInput.setSingleLine();
@@ -207,9 +403,8 @@ public final class MainActivity extends BaseActivity implements App.ServiceListe
             }
         });
         filterBar.addView(typeFilter, new LinearLayout.LayoutParams(-2, -2));
-        root.addView(filterBar, marTop(dp(12)));
+        box.addView(filterBar, marTop(dp(10)));
 
-        // --- view mode tabs (列表 / 本周) ---
         LinearLayout tabs = hbox();
         listTab = tabButton("列表", true);
         weekTab = tabButton("本周", false);
@@ -218,7 +413,7 @@ public final class MainActivity extends BaseActivity implements App.ServiceListe
         tabs.addView(listTab, new LinearLayout.LayoutParams(0, -2, 1f));
         tabs.addView(space(dp(10)));
         tabs.addView(weekTab, new LinearLayout.LayoutParams(0, -2, 1f));
-        root.addView(tabs, marTop(dp(10)));
+        box.addView(tabs, marTop(dp(10)));
         searchInput.addTextChangedListener(new TextWatcher() {
             @Override
             public void beforeTextChanged(CharSequence s, int start, int count, int after) {
@@ -235,25 +430,196 @@ public final class MainActivity extends BaseActivity implements App.ServiceListe
             }
         });
 
-        // --- section ---
-        root.addView(sectionHeader("待办事项"));
-
-        // --- item list ---
         itemList = new LinearLayout(this);
         itemList.setOrientation(LinearLayout.VERTICAL);
-        root.addView(itemList, new LinearLayout.LayoutParams(-1, -2));
+        box.addView(itemList, marTop(dp(10)));
 
-        // --- empty state (initially hidden) ---
         emptyContainer = new LinearLayout(this);
         emptyContainer.setGravity(Gravity.CENTER);
         emptyContainer.setPadding(dp(8), dp(20), dp(8), dp(20));
         TextView emptyText = text("", 15, false, UiTheme.muted(this));
         emptyText.setGravity(Gravity.CENTER);
         emptyContainer.addView(emptyText, new LinearLayout.LayoutParams(-1, -2));
-        root.addView(emptyContainer, new LinearLayout.LayoutParams(-1, -2));
+        box.addView(emptyContainer, new LinearLayout.LayoutParams(-1, -2));
+        return box;
+    }
 
-        scroll.addView(root, new ScrollView.LayoutParams(-1, -2));
-        return scroll;
+    /** 课程表 tab: the weekly grid plus the actions that fetch its data. */
+    private View buildTimetableTab() {
+        LinearLayout page = scaffold("课程表", null);
+        LinearLayout body = scrollBody(page);
+
+        DeadlineStore store = new DeadlineStore(this);
+        long now = System.currentTimeMillis();
+        long firstWeekDate = store.scheduleFirstWeekDate();
+        String sectionTimes = store.scheduleSectionTimes();
+        int currentWeek = ScheduleMath.currentWeek(now, firstWeekDate);
+        List<Lesson> lessons = store.allLessons();
+        int week = displayedWeek > 0 ? displayedWeek : Math.max(1, currentWeek);
+        List<Lesson> today = ScheduleMath.todayLessons(lessons, now, firstWeekDate);
+        Lesson current = ScheduleMath.currentLesson(today, now, firstWeekDate, sectionTimes);
+
+        if (lessons.isEmpty()) {
+            body.addView(glassEmptyCard("还没有课表数据",
+                    "点下面的「获取整学期」从学习通拉取，或打开学习通的课表页面自动捕获。"),
+                    new LinearLayout.LayoutParams(-1, -2));
+            body.addView(timetableActions(), marTop(dp(10)));
+            return page;
+        }
+
+        body.addView(weekSwitcher(week, currentWeek, firstWeekDate),
+                new LinearLayout.LayoutParams(-1, -2));
+        TimetableGrid.Grid grid = TimetableGrid.build(lessons, week);
+        if (grid.rows == 0) {
+            body.addView(glassEmptyCard("第 " + week + " 周没有课",
+                            store.hasFetchedWeek(week) ? "这一周已经取回，周内没有安排课程。"
+                                    : "这一周还没取回过，点下面的按钮获取。"),
+                    marTop(dp(10)));
+        } else {
+            body.addView(TimetableViews.grid(this, grid, week, currentWeek, current,
+                    firstWeekDate, sectionTimes, now, this::showLessonDetail), marTop(dp(10)));
+        }
+        body.addView(timetableActions(), marTop(dp(12)));
+        return page;
+    }
+
+    /** Timetable data actions: refresh the current week, sweep the semester, open the page. */
+    private View timetableActions() {
+        LinearLayout panel = GlassUi.panel(this);
+        final DeadlineStore store = new DeadlineStore(this);
+        View refresh = GlassUi.actionRow(this, "重新获取本周",
+                "向学习通请求当前周的课表，已取回的周次会保留");
+        refresh.setOnClickListener(v -> {
+            RefreshBridge.requestWeek(this, Math.max(1, ScheduleMath.currentWeek(
+                    System.currentTimeMillis(), store.scheduleFirstWeekDate())));
+            Toast.makeText(this, "已请求本周课表", Toast.LENGTH_SHORT).show();
+        });
+        panel.addView(refresh, new LinearLayout.LayoutParams(-1, -2));
+
+        View all = GlassUi.actionRow(this, "获取整学期",
+                store.scheduleMaxWeek() > 0
+                        ? "逐周取回整学期（共 " + store.scheduleMaxWeek() + " 周），需要一点时间"
+                        : "逐周取回整学期，需要一点时间");
+        all.setOnClickListener(v -> {
+            RefreshBridge.requestWholeSemester(this);
+            Toast.makeText(this, "已请求整学期课表，稍后自动更新", Toast.LENGTH_SHORT).show();
+        });
+        panel.addView(all, new LinearLayout.LayoutParams(-1, -2));
+
+        View open = GlassUi.actionRow(this, "打开完整课表页", "今日 / 周 / 设置 三个板块");
+        open.setOnClickListener(v -> startActivity(new Intent(this, ScheduleActivity.class)));
+        panel.addView(open, new LinearLayout.LayoutParams(-1, -2));
+        return panel;
+    }
+
+    /** Week stepper, matching the full timetable page's. */
+    private View weekSwitcher(int week, int currentWeek, long firstWeekDate) {
+        LinearLayout bar = GlassUi.row(this);
+        bar.setPadding(dp(6), dp(6), dp(6), dp(6));
+        bar.setBackground(UiTheme.glassCard(this, dp(16)));
+
+        TextView prev = icon("\u2039", 26, UiTheme.accent(this));
+        prev.setOnClickListener(v -> {
+            displayedWeek = Math.max(1, week - 1);
+            showTab(TAB_TIMETABLE);
+        });
+        bar.addView(prev, new LinearLayout.LayoutParams(dp(40), dp(40)));
+
+        LinearLayout center = GlassUi.column(this);
+        center.setGravity(Gravity.CENTER);
+        TextView weekLabel = text("第 " + week + " 周", 15, true, UiTheme.text(this));
+        weekLabel.setGravity(Gravity.CENTER);
+        center.addView(weekLabel, new LinearLayout.LayoutParams(-1, -2));
+        String range = TimetableViews.weekRangeLabel(firstWeekDate, week);
+        if (currentWeek > 0 && week == currentWeek) {
+            range = range + " · 本周";
+        }
+        TextView rangeLabel = text(range, 11, false, UiTheme.muted(this));
+        rangeLabel.setGravity(Gravity.CENTER);
+        center.addView(rangeLabel, new LinearLayout.LayoutParams(-1, -2));
+        bar.addView(center, new LinearLayout.LayoutParams(0, -2, 1f));
+
+        TextView next = icon("\u203a", 26, UiTheme.accent(this));
+        next.setOnClickListener(v -> {
+            displayedWeek = Math.min(30, week + 1);
+            showTab(TAB_TIMETABLE);
+        });
+        bar.addView(next, new LinearLayout.LayoutParams(dp(40), dp(40)));
+
+        if (currentWeek > 0 && week != currentWeek) {
+            TextView jump = text("本周", 13, true, UiTheme.accent(this));
+            jump.setGravity(Gravity.CENTER);
+            jump.setOnClickListener(v -> {
+                displayedWeek = currentWeek;
+                showTab(TAB_TIMETABLE);
+            });
+            bar.addView(jump, new LinearLayout.LayoutParams(dp(44), -1));
+        }
+        return bar;
+    }
+
+    /** 我的: account state, the app's other surfaces, and the settings entry. */
+    private View buildMineTab() {
+        LinearLayout page = scaffold("我的", "账号、数据与全部设置");
+        LinearLayout body = scrollBody(page);
+
+        LinearLayout status = GlassUi.panel(this);
+        status.setPadding(dp(16), dp(14), dp(16), dp(14));
+        activeBadge = text("", 15, true, UiTheme.text(this));
+        status.addView(activeBadge, new LinearLayout.LayoutParams(-1, -2));
+        statusText = text("", 12, false, UiTheme.muted(this));
+        statusText.setPadding(0, dp(4), 0, 0);
+        status.addView(statusText, new LinearLayout.LayoutParams(-1, -2));
+        body.addView(status, new LinearLayout.LayoutParams(-1, -2));
+
+        LinearLayout actions = GlassUi.panel(this);
+        View settings = GlassUi.actionRow(this, "设置", "通知、免打扰、摘要、课程管理与备份");
+        settings.setOnClickListener(v -> startActivity(new Intent(this, SettingsActivity.class)));
+        actions.addView(settings, new LinearLayout.LayoutParams(-1, -2));
+        View stats = GlassUi.actionRow(this, "统计概览", "未完成／已过期／已完成与课程排行");
+        stats.setOnClickListener(v -> startActivity(new Intent(this, StatsActivity.class)));
+        actions.addView(stats, new LinearLayout.LayoutParams(-1, -2));
+        View calendar = GlassUi.actionRow(this, "月历", "整月截止分布，点某天查看当天待办");
+        calendar.setOnClickListener(v -> startActivity(new Intent(this, MonthCalendarActivity.class)));
+        actions.addView(calendar, new LinearLayout.LayoutParams(-1, -2));
+        View add = GlassUi.actionRow(this, "添加待办", "手动记一条学习通上没有的截止项");
+        add.setOnClickListener(v -> ManualDeadlineDialog.show(this, () -> reload(false)));
+        actions.addView(add, new LinearLayout.LayoutParams(-1, -2));
+        body.addView(actions, marTop(dp(10)));
+
+        LinearLayout links = GlassUi.panel(this);
+        View download = GlassUi.actionRow(this, "下载最新版", "按当前签名下载对应安装包");
+        download.setOnClickListener(v -> openLatestDownload());
+        links.addView(download, new LinearLayout.LayoutParams(-1, -2));
+        View about = GlassUi.actionRow(this, "关于", "版本、许可与致谢");
+        about.setOnClickListener(v -> startActivity(new Intent(this, AboutActivity.class)));
+        links.addView(about, new LinearLayout.LayoutParams(-1, -2));
+        body.addView(links, marTop(dp(10)));
+        return page;
+    }
+
+    private View glassEmptyCard(String title, String body) {
+        LinearLayout panel = GlassUi.panel(this);
+        panel.setPadding(dp(18), dp(20), dp(18), dp(20));
+        panel.addView(GlassUi.title(this, title, 16), new LinearLayout.LayoutParams(-1, -2));
+        TextView text = GlassUi.body(this, body, 13);
+        text.setPadding(0, dp(6), 0, 0);
+        panel.addView(text, new LinearLayout.LayoutParams(-1, -2));
+        return panel;
+    }
+
+    /** Direct download of the newest build, matching the installed signature. */
+    private void openLatestDownload() {
+        boolean debuggable = (getApplicationInfo().flags
+                & android.content.pm.ApplicationInfo.FLAG_DEBUGGABLE) != 0;
+        String asset = debuggable ? "Deadline-debug.apk" : "Deadline-release.apk";
+        try {
+            startActivity(new Intent(Intent.ACTION_VIEW, android.net.Uri.parse(
+                    "https://github.com/suiren0219/dev.chaoxingdeadline/releases/latest/download/"
+                            + asset)));
+        } catch (Throwable throwable) {
+            Toast.makeText(this, "未找到可用的浏览器", Toast.LENGTH_SHORT).show();
+        }
     }
 
     private LinearLayout statChip(String iconChar, String label, TextView countView) {
@@ -318,9 +684,6 @@ public final class MainActivity extends BaseActivity implements App.ServiceListe
         countExpired.setText(String.valueOf(expired));
         countBlocked.setText(String.valueOf(blocked));
 
-        scheduleContainer.removeAllViews();
-        scheduleContainer.addView(scheduleCard());
-
         boolean empty = items.isEmpty();
         itemList.setVisibility(empty ? View.GONE : View.VISIBLE);
         emptyContainer.setVisibility(empty ? View.VISIBLE : View.GONE);
@@ -328,105 +691,6 @@ public final class MainActivity extends BaseActivity implements App.ServiceListe
                 ? "暂无待办\n\n打开学习通后会自动捕获作业和考试截止时间。"
                 : "尚未检测到激活\n\n请在 LSPosed 中勾选本模块，作用域选择「学习通」。");
 
-    }
-
-    /**
-     * 今日课表卡片：首页最显眼的课表入口。显示周次、今天的课程与「上课中」状态，
-     * 点按进入周网格课表页，右侧刷新图标向学习通请求重新拉取。
-     */
-    private View scheduleCard() {
-        LinearLayout card = card();
-        card.setPadding(dp(16), dp(14), dp(16), dp(14));
-        card.setOnClickListener(v -> startActivity(new Intent(this, ScheduleActivity.class)));
-
-        DeadlineStore store = new DeadlineStore(this);
-        long now = System.currentTimeMillis();
-        long firstWeekDate = store.scheduleFirstWeekDate();
-        String sectionTimes = store.scheduleSectionTimes();
-        int week = ScheduleMath.currentWeek(now, firstWeekDate);
-        List<Lesson> today = ScheduleMath.todayLessons(store.allLessons(), now, firstWeekDate);
-        Lesson current = ScheduleMath.currentLesson(today, now, firstWeekDate, sectionTimes);
-
-        LinearLayout header = hbox();
-        TextView title = text("今日课表", 15, true, UiTheme.text(this));
-        header.addView(title, new LinearLayout.LayoutParams(0, -2, 1f));
-        TextView weekLabel = text(week > 0 ? "第 " + week + " 周" : "课表未获取",
-                11, false, UiTheme.muted(this));
-        header.addView(weekLabel, new LinearLayout.LayoutParams(-2, -2));
-        TextView refresh = icon("⟳", 18, UiTheme.accent(this));
-        refresh.setOnClickListener(v -> {
-            RefreshBridge.requestFull(this);
-            Toast.makeText(this, "已请求刷新课表", Toast.LENGTH_SHORT).show();
-        });
-        header.addView(refresh, new LinearLayout.LayoutParams(dp(30), -2));
-        TextView more = icon("›", 20, UiTheme.muted(this));
-        header.addView(more, new LinearLayout.LayoutParams(dp(22), -2));
-        card.addView(header, new LinearLayout.LayoutParams(-1, -2));
-
-        if (today.isEmpty()) {
-            TextView empty = text(store.scheduleUpdatedAt() > 0L
-                    ? "今天没有课" : "还没有课表数据\n打开学习通课表页面即可自动获取",
-                    12, false, UiTheme.muted(this));
-            empty.setPadding(dp(2), dp(8), dp(2), dp(2));
-            empty.setLineSpacing(0f, 1.2f);
-            card.addView(empty, new LinearLayout.LayoutParams(-1, -2));
-            return card;
-        }
-
-        int shown = Math.min(today.size(), 3);
-        for (int i = 0; i < shown; i++) {
-            card.addView(todayLessonRow(today.get(i), current, week, firstWeekDate,
-                    sectionTimes, now), new LinearLayout.LayoutParams(-1, -2));
-        }
-        if (today.size() > shown) {
-            TextView rest = text("还有 " + (today.size() - shown) + " 节课，点按查看完整课表",
-                    11, false, UiTheme.muted(this));
-            rest.setPadding(dp(2), dp(6), 0, 0);
-            card.addView(rest, new LinearLayout.LayoutParams(-1, -2));
-        }
-        return card;
-    }
-
-    private View todayLessonRow(Lesson lesson, Lesson current, int week, long firstWeekDate,
-                                String sectionTimes, long now) {
-        boolean isCurrent = current != null && current.id != null && current.id.equals(lesson.id);
-        long start = ScheduleMath.lessonStartAt(firstWeekDate, week, lesson.dayOfWeek,
-                lesson.beginSection, sectionTimes);
-        long end = ScheduleMath.lessonEndAt(firstWeekDate, week, lesson.dayOfWeek,
-                lesson.beginSection, lesson.sections, sectionTimes);
-        boolean isPast = end > 0L && now >= end;
-
-        LinearLayout row = new LinearLayout(this);
-        row.setOrientation(LinearLayout.HORIZONTAL);
-        row.setGravity(Gravity.CENTER_VERTICAL);
-        row.setPadding(dp(6), dp(6), dp(6), dp(6));
-        if (isCurrent) {
-            row.setBackground(UiTheme.fillOnly(this, UiTheme.dangerBg(this), dp(10)));
-        }
-
-        TextView time = new TextView(this);
-        time.setText((start > 0L ? DateText.clock(start) : "--:--") + "\n"
-                + ScheduleMath.formatSections(lesson.beginSection, lesson.sections));
-        time.setTextSize(10);
-        time.setLineSpacing(0f, 1.1f);
-        time.setTypeface(android.graphics.Typeface.DEFAULT_BOLD);
-        time.setTextColor(isCurrent ? UiTheme.dangerText(this) : UiTheme.muted(this));
-        row.addView(time, new LinearLayout.LayoutParams(dp(56), -2));
-
-        LinearLayout texts = new LinearLayout(this);
-        texts.setOrientation(LinearLayout.VERTICAL);
-        TextView name = text(lesson.name + (isCurrent ? " · 上课中" : ""), 13, isCurrent,
-                isPast ? UiTheme.muted(this)
-                        : (isCurrent ? UiTheme.dangerText(this) : UiTheme.text(this)));
-        texts.addView(name, new LinearLayout.LayoutParams(-1, -2));
-        String label = lesson.label();
-        if (!label.isEmpty()) {
-            TextView meta = text(label, 10, false, UiTheme.muted(this));
-            meta.setPadding(0, dp(2), 0, 0);
-            texts.addView(meta, new LinearLayout.LayoutParams(-1, -2));
-        }
-        row.addView(texts, new LinearLayout.LayoutParams(0, -2, 1f));
-        return row;
     }
 
     private TextView tabButton(String label, boolean active) {

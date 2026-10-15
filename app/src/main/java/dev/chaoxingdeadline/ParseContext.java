@@ -11,9 +11,20 @@ public final class ParseContext {
     public final String uid;
     public final String courseName;
     public final int courseConfidence;
+    /**
+     * Teaching week this payload describes, 0 when unknown. Carried on the context rather
+     * than a thread-local so it survives the async course scanners too.
+     */
+    public final int week;
 
     public ParseContext(String source, String url, String courseId, String classId,
                         String cpi, String uid, String courseName, int courseConfidence) {
+        this(source, url, courseId, classId, cpi, uid, courseName, courseConfidence, 0);
+    }
+
+    public ParseContext(String source, String url, String courseId, String classId,
+                        String cpi, String uid, String courseName, int courseConfidence,
+                        int week) {
         this.source = clean(source);
         this.url = clean(url);
         this.courseId = clean(courseId);
@@ -22,6 +33,16 @@ public final class ParseContext {
         this.uid = clean(uid);
         this.courseName = clean(courseName);
         this.courseConfidence = courseConfidence;
+        this.week = week;
+    }
+
+    /** Same context, tagged with the teaching week this payload answers for. */
+    public ParseContext withWeek(int teachingWeek) {
+        if (teachingWeek <= 0 || teachingWeek == week) {
+            return this;
+        }
+        return new ParseContext(source, url, courseId, classId, cpi, uid, courseName,
+                courseConfidence, teachingWeek);
     }
 
     public static ParseContext simple(String source) {
@@ -48,7 +69,8 @@ public final class ParseContext {
     }
 
     public ParseContext withUrl(String nextUrl) {
-        return new ParseContext(source, nextUrl, courseId, classId, cpi, uid, courseName, courseConfidence);
+        return new ParseContext(source, nextUrl, courseId, classId, cpi, uid, courseName,
+                courseConfidence, week);
     }
 
     public boolean isActive() {

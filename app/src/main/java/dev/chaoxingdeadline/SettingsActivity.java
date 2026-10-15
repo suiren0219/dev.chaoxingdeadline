@@ -33,7 +33,7 @@ public final class SettingsActivity extends BaseActivity {
     private View buildContent() {
         LinearLayout root = new LinearLayout(this);
         root.setOrientation(LinearLayout.VERTICAL);
-        root.setBackgroundColor(UiTheme.background(this));
+        root.setBackground(UiTheme.glassBackground(this));
         root.setPadding(dp(20), statusBarHeight() + dp(8), dp(20), dp(16));
 
         root.addView(titleBar("设置"), new LinearLayout.LayoutParams(-1, dp(48)));
@@ -339,7 +339,9 @@ public final class SettingsActivity extends BaseActivity {
 
     private View divider() {
         View v = new View(this);
-        v.setBackgroundColor(UiTheme.divider(this));
+        // Half-alpha so the line reads as an inner edge of the frosted panel rather
+        // than an opaque rule drawn on top of it.
+        v.setBackgroundColor(UiTheme.withAlpha(UiTheme.divider(this), 0x99));
         LinearLayout.LayoutParams p = new LinearLayout.LayoutParams(-1, dp(1));
         p.leftMargin = dp(16);
         p.rightMargin = dp(16);
@@ -369,7 +371,8 @@ public final class SettingsActivity extends BaseActivity {
         notifyHours.setTextColor(UiTheme.text(this));
         notifyHours.setTextSize(16);
         notifyHours.setGravity(Gravity.CENTER);
-        notifyHours.setBackground(UiTheme.fillOnly(this, UiTheme.background(this), dp(12)));
+        notifyHours.setBackground(UiTheme.glassFill(this, UiTheme.accent(this), dp(12)));
+        notifyHours.setTextColor(UiTheme.text(this));
         notifyHours.setPadding(dp(12), 0, dp(12), 0);
         row.addView(notifyHours, new LinearLayout.LayoutParams(dp(64), dp(40)));
 

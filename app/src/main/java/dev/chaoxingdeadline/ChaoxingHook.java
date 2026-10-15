@@ -107,6 +107,19 @@ public final class ChaoxingHook extends XposedModule {
     private static final Map<String, String> COURSE_KEYS_BY_NAME = new HashMap<>();
     private static final String TIMETABLE_URL =
             "https://kb.chaoxing.com/pc/curriculum/getMyLessons";
+    /** Same payload as above but addressed by curriculumUuid; used when one is known. */
+    private static final String TIMETABLE_UUID_URL =
+            "https://kb.chaoxing.com/curriculum/getOtherLessons";
+    /** Pause between weeks of a semester sweep; one request per week is already gentle. */
+    private static final long WEEK_SWEEP_PAUSE_MS = 1200L;
+    /** Upper bound on a semester sweep when the payload does not state a maxWeek. */
+    private static final int DEFAULT_MAX_WEEK = 24;
+    /** maxWeek reported by the last timetable payload; the real semester length. */
+    private static volatile int maxWeekSeen;
+    /** Teaching weeks already merged this session, so a sweep can skip repeats. */
+    private static final Set<Integer> SWEPT_WEEKS = new HashSet<>();
+    /** Lesson count the last timetable payload carried; 0 means the week was empty. */
+    private static volatile int lastWeekLessonCount;
     // In-class boost: one activity-list refresh per course at most this often, only
     // during the first minutes of a session (where sign-ins actually happen).
     private static final long SESSION_TICK_MS = 60_000L;
@@ -764,27 +777,21 @@ public final class ChaoxingHook extends XposedModule {
         int upToWeek = intent.getIntExtra("through_week", 0);
         if (week > 0 || upToWeek > 0) {
             final int from = Math.max(1, week);
-            final int to = upToWeek > 0 ? Math.max(from, upToWeek) : from;
-            log(Log.INFO, TAG, "timetable refresh requested for weeks " + from + "-" + to);
+            // "through_week" arrives as 0 for a single-week pull and as a sentinel for a
+            // full-semester sweep. The sweep asks for as many weeks as the endpoint will
+            // answer, not a fixed number, because maxWeek differs per school.
+            final boolean fullSemester = intent.getBooleanExtra("whole_semester", false);
+            final int to = fullSemester ? Math.max(DEFAULT_MAX_WEEK, maxWeekSeen)
+                    : (upToWeek > 0 ? Math.max(from, upToWeek) : from);
+            log(Log.INFO, TAG, "timetable refresh for weeks " + from + "-" + to
+                    + (fullSemester ? " (semester sweep)" : ""));
             Thread worker = new Thread(() -> {
                 try {
-                    // Serial with a pause between weeks: the same anti-spider guard that
-                    // paces the course list applies here, and firing one request per week
-                    // back-to-back is exactly what trips it.
-                    for (int target = from; target <= to; target++) {
-                        if (System.currentTimeMillis() < antiSpiderUntil) {
-                            log(Log.WARN, TAG, "stopped week sweep at week " + target
-                                    + ": antispider cooldown active");
-                            break;
-                        }
-                        fetchTimetable(target);
-                        if (target < to) {
-                            Thread.sleep(1200L);
-                        }
-                    }
-                    emitStatus("课表已更新", "moduleRequest");
+                    int found = sweepTimetableWeeks(from, to);
+                    emitStatus("课表已更新（" + found + " 周有课）", "moduleRequest");
                 } catch (Throwable throwable) {
                     log(Log.WARN, TAG, "timetable refresh failed: " + throwable);
+                    emitStatus("课表更新失败", "moduleRequest");
                 }
             }, "ChaoxingDeadlineTimetableRefresh");
             worker.setDaemon(true);
@@ -1902,8 +1909,13 @@ public final class ChaoxingHook extends XposedModule {
      *             multi-timetable accounts get the right one.
      */
     private void fetchTimetable(int week) {
+        // The mobile page asks getOtherLessons when the URL carries a curriculumUuid and
+        // getMyLessons otherwise; both answer with the same payload shape, but only the
+        // uuid form is reachable without the page's own session state.
+        String url = TIMETABLE_URL;
         StringBuilder body = new StringBuilder();
         if (!curriculumUuid.isEmpty()) {
+            url = TIMETABLE_UUID_URL;
             body.append("curriculumUuid=").append(android.net.Uri.encode(curriculumUuid));
         }
         if (week > 0) {
@@ -1916,12 +1928,70 @@ public final class ChaoxingHook extends XposedModule {
         // thread, so a ThreadLocal carries the requested week to the broadcast. Passive
         // page captures never set it, which is right: their week is unknown.
         FETCH_WEEK.set(week);
+        // Cleared first: an empty week never reaches rememberTimetable (the parser
+        // returns null for it), so a stale count from the previous week would otherwise
+        // make an empty week look populated.
+        lastWeekLessonCount = 0;
         try {
-            fetchUrl(TIMETABLE_URL, ParseContext.fromSource("active.timetable", TIMETABLE_URL),
-                    body.toString());
+            fetchUrl(url, ParseContext.fromSource("active.timetable", url), body.toString());
         } finally {
             FETCH_WEEK.remove();
         }
+    }
+
+    /**
+     * Sweeps one teaching week after another until the endpoint stops returning lessons,
+     * then broadcasts what it collected. Runs on a worker thread.
+     *
+     * The endpoint cannot answer a whole semester in one call — verified against the live
+     * service: without a week it returns the current week only, and each lesson comes back
+     * stamped with just that week. Sweeping is what reconstructs the semester, and the
+     * module merges the per-week answers by lesson slot with unioned week lists.
+     *
+     * @param fromWeek first week to pull (1-based)
+     * @param maxWeek  hard stop, so a wrong maxWeek in a payload cannot spawn a long loop
+     * @return the number of weeks that returned lessons
+     */
+    private int sweepTimetableWeeks(int fromWeek, int maxWeek) {
+        int weeksWithLessons = 0;
+        int emptyRun = 0;
+        for (int week = Math.max(1, fromWeek); week <= maxWeek; week++) {
+            if (System.currentTimeMillis() < antiSpiderUntil) {
+                log(Log.WARN, TAG, "stopped timetable sweep at week " + week
+                        + ": antispider cooldown active");
+                break;
+            }
+            try {
+                fetchTimetable(week);
+            } catch (Throwable throwable) {
+                log(Log.WARN, TAG, "timetable sweep failed at week " + week + ": " + throwable);
+                break;
+            }
+            // Emptiness is judged on what the endpoint returned for this week, not on
+            // whether the merged result grew: once every slot is known, later weeks still
+            // have classes but add no new ones, and a growth test would stop the sweep
+            // around week 3 of a 19-week semester.
+            int returned = lastWeekLessonCount;
+            if (returned > 0) {
+                weeksWithLessons++;
+                emptyRun = 0;
+            } else {
+                // Two consecutive empty weeks mean the semester is over; a single empty
+                // week alone can be a holiday (国庆, exam week) in the middle of a term.
+                emptyRun++;
+                if (emptyRun >= 2) {
+                    log(Log.INFO, TAG, "timetable sweep reached the end at week " + week);
+                    break;
+                }
+            }
+            try {
+                Thread.sleep(WEEK_SWEEP_PAUSE_MS);
+            } catch (InterruptedException interrupted) {
+                Thread.currentThread().interrupt();
+                break;
+            }
+        }
+        return weeksWithLessons;
     }
 
     /** Remembers the curriculumUuid seen on any timetable URL (schedule.html, data calls). */
@@ -1989,10 +2059,41 @@ public final class ChaoxingHook extends XposedModule {
         log(Log.WARN, TAG, "unparsed timetable-ish payload from " + url + ": " + sample);
     }
 
+    /**
+     * Folds one week's payload into the in-process timetable.
+     *
+     * Merged by lesson slot rather than replaced: the endpoint answers one week at a time,
+     * so a replace would leave only whichever week was fetched last, and every lesson's
+     * own weeks field names just that week (see DeadlineStore.mergeLessons for the same
+     * reasoning on the module side).
+     */
     private void rememberTimetable(TimetableParser.Result result) {
+        int week = FETCH_WEEK.get() == null ? 0 : FETCH_WEEK.get();
         synchronized (LESSONS) {
+            Map<String, Lesson> bySlot = new HashMap<>();
+            for (Lesson existing : LESSONS) {
+                bySlot.put(Lesson.slotKey(existing), existing);
+            }
+            for (Lesson incoming : result.lessons) {
+                String slot = Lesson.slotKey(incoming);
+                Lesson existing = bySlot.get(slot);
+                if (existing == null) {
+                    bySlot.put(slot, incoming);
+                    continue;
+                }
+                // Keep the row we already have and widen its week list; the server hands
+                // out a fresh lesson id per week for the same class, so id-based keeping
+                // would churn the identity on every sweep.
+                existing.weeks = ScheduleMath.weeksMerge(existing.weeks, incoming.weeks);
+                if (existing.teacher == null || existing.teacher.isEmpty()) {
+                    existing.teacher = incoming.teacher;
+                }
+                if (existing.location == null || existing.location.isEmpty()) {
+                    existing.location = incoming.location;
+                }
+            }
             LESSONS.clear();
-            LESSONS.addAll(result.lessons);
+            LESSONS.addAll(bySlot.values());
         }
         if (result.firstWeekDate > 0L) {
             firstWeekDate = result.firstWeekDate;
@@ -2000,11 +2101,21 @@ public final class ChaoxingHook extends XposedModule {
         if (result.sectionTimesJson != null && !result.sectionTimesJson.isEmpty()) {
             sectionTimesJson = result.sectionTimesJson;
         }
+        if (result.maxWeek > 0) {
+            maxWeekSeen = result.maxWeek;
+        }
+        if (week > 0) {
+            synchronized (SWEPT_WEEKS) {
+                SWEPT_WEEKS.add(week);
+            }
+        }
+        // Read by the sweep loop to tell an empty week from a populated one.
+        lastWeekLessonCount = result.lessons.size();
         buildCourseKeyIndex();
         emitTimetable(result);
         scheduleSessionTick();
-        log(Log.INFO, TAG, "timetable stored: lessons=" + result.lessons.size()
-                + " firstWeekDate=" + firstWeekDate);
+        log(Log.INFO, TAG, "timetable merged: week=" + week + " incoming=" + result.lessons.size()
+                + " total=" + lessonsSnapshot().size() + " firstWeekDate=" + firstWeekDate);
     }
 
     /** name -> "courseId|classId" for the in-class boost; first class of a course wins. */
@@ -2048,6 +2159,10 @@ public final class ChaoxingHook extends XposedModule {
                 // The module merges this capture into the weeks it already has, so it
                 // must know which week this payload describes (see mergeLessons).
                 intent.putExtra(DeadlineReceiver.EXTRA_WEEK, week);
+            }
+            if (maxWeekSeen > 0) {
+                // Lets the module show the real semester length instead of a guess.
+                intent.putExtra(DeadlineReceiver.EXTRA_MAX_WEEK, maxWeekSeen);
             }
             attachBridgeToken(intent);
             context.sendBroadcast(intent);

@@ -41,7 +41,7 @@ public final class MonthCalendarActivity extends BaseActivity {
     private View buildContent() {
         LinearLayout root = new LinearLayout(this);
         root.setOrientation(LinearLayout.VERTICAL);
-        root.setBackgroundColor(UiTheme.background(this));
+        root.setBackground(UiTheme.glassBackground(this));
         root.setPadding(dp(16), statusBarHeight() + dp(8), dp(16), dp(16));
 
         // --- header: ‹ 年月 › ---

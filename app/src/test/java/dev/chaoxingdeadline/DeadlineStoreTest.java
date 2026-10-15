@@ -306,7 +306,7 @@ public class DeadlineStoreTest {
         // Week 1 capture: a Monday lesson that runs all semester.
         store.mergeLessons(Collections.singletonList(
                 new Lesson("L1", "高等数学", "张三", "教一101", 1, 1, 2, "1-16")),
-                1_800_000_000_000L, "", 1);
+                1_800_000_000_000L, "", 1, 0);
         assertEquals(1, store.allLessons().size());
         assertTrue("week 1 is recorded as fetched", store.hasFetchedWeek(1));
         assertFalse("a week never pulled is not claimed", store.hasFetchedWeek(2));
@@ -315,7 +315,7 @@ public class DeadlineStoreTest {
         // replacing the table here was the bug that made the timetable look current-week-only.
         store.mergeLessons(Collections.singletonList(
                 new Lesson("L2", "专题讲座", "王五", "报告厅", 2, 3, 2, "2")),
-                1_800_000_000_000L, "", 2);
+                1_800_000_000_000L, "", 2, 0);
         List<Lesson> merged = store.allLessons();
         assertEquals(2, merged.size());
         assertTrue(containsLessonId(merged, "L1"));
@@ -325,7 +325,7 @@ public class DeadlineStoreTest {
         // Re-pulling week 1 with an updated room updates in place instead of duplicating.
         store.mergeLessons(Collections.singletonList(
                 new Lesson("L1", "高等数学", "张三", "教一205", 1, 1, 2, "1-16")),
-                1_800_000_000_000L, "", 1);
+                1_800_000_000_000L, "", 1, 0);
         assertEquals("re-capturing a week must not duplicate its rows", 2, store.allLessons().size());
         assertEquals("教一205", lessonById(store.allLessons(), "L1").location);
     }
@@ -334,14 +334,14 @@ public class DeadlineStoreTest {
     public void mergeLessonsResetsOnASemesterChange() {
         store.mergeLessons(Collections.singletonList(
                 new Lesson("OLD", "旧学期课", "", "", 1, 1, 2, "1-16")),
-                1_800_000_000_000L, "", 1);
+                1_800_000_000_000L, "", 1, 0);
         assertTrue(store.hasFetchedWeek(1));
 
         // A firstWeekDate months away means a new semester: every stored row is stale.
         long nextSemester = 1_800_000_000_000L + 120L * 24L * 60L * 60L * 1000L;
         store.mergeLessons(Collections.singletonList(
                 new Lesson("NEW", "新学期课", "", "", 3, 2, 2, "1-16")),
-                nextSemester, "", 1);
+                nextSemester, "", 1, 0);
         List<Lesson> lessons = store.allLessons();
         assertEquals(1, lessons.size());
         assertEquals("NEW", lessons.get(0).id);
@@ -353,12 +353,12 @@ public class DeadlineStoreTest {
     public void mergeLessonsToleratesJitterInFirstWeekDate() {
         store.mergeLessons(Collections.singletonList(
                 new Lesson("L1", "高数", "", "", 1, 1, 2, "1-16")),
-                1_800_000_000_000L, "", 0);
+                1_800_000_000_000L, "", 0, 0);
         // Same semester, but the payload spells the date a few hours off (timezone or
         // date-vs-timestamp formatting): that must not be read as a new semester.
         store.mergeLessons(Collections.singletonList(
                 new Lesson("L2", "英语", "", "", 3, 3, 2, "1-16")),
-                1_800_000_000_000L + 8L * 60L * 60L * 1000L, "", 0);
+                1_800_000_000_000L + 8L * 60L * 60L * 1000L, "", 0, 0);
         assertEquals("jitter keeps both rows", 2, store.allLessons().size());
     }
 
@@ -367,10 +367,74 @@ public class DeadlineStoreTest {
         // A passive page capture carries no week; it still merges its lessons in.
         store.mergeLessons(Collections.singletonList(
                 new Lesson("L1", "高数", "", "", 1, 1, 2, "1-16")),
-                1_800_000_000_000L, "", 0);
+                1_800_000_000_000L, "", 0, 0);
         assertEquals(1, store.allLessons().size());
         assertFalse("no week given means no week recorded", store.hasFetchedWeek(0));
         assertFalse(store.hasFetchedWeek(1));
+    }
+
+
+    @Test
+    public void mergeLessonsSurvivesAShiftingServerLessonId() {
+        // Verified against the live endpoint: the same class comes back with a different
+        // lessonConfigId depending on which week you ask for. Merging by id therefore
+        // stored one duplicate per week swept; the slot (name+weekday+section) is stable.
+        store.mergeLessons(Collections.singletonList(
+                new Lesson("155704694967468032", "体育", "王老师", "体育馆", 1, 3, 2, "1")),
+                1_800_000_000_000L, "", 1, 0);
+        store.mergeLessons(Collections.singletonList(
+                new Lesson("155704693660942336", "体育", "王老师", "体育馆", 1, 3, 2, "2")),
+                1_800_000_000_000L, "", 2, 0);
+        List<Lesson> lessons = store.allLessons();
+        assertEquals("one row despite two different server ids", 1, lessons.size());
+        assertEquals("1-2", lessons.get(0).weeks);
+    }
+
+    @Test
+    public void mergeLessonsUnionsWeekListsIntoSemesterRanges() {
+        // Each week arrives stamped with just that week; sweeping 1..5 must rebuild "1-5".
+        for (int week = 1; week <= 5; week++) {
+            store.mergeLessons(Collections.singletonList(
+                    new Lesson("id-" + week, "示例课程", "李老师", "教三301", 2, 1, 2,
+                            String.valueOf(week))),
+                    1_800_000_000_000L, "", week, 0);
+        }
+        List<Lesson> lessons = store.allLessons();
+        assertEquals(1, lessons.size());
+        assertEquals("1-5", lessons.get(0).weeks);
+    }
+
+    @Test
+    public void mergeLessonsKeepsSeparateSlotsForTheSameCourse() {
+        // Two lessons of one course in different slots (seen in real timetables) stay apart.
+        store.mergeLessons(Arrays.asList(
+                new Lesson("a", "大学英语Ⅲ", "张老师", "教二202", 3, 3, 2, "1-16"),
+                new Lesson("b", "大学英语Ⅲ", "张老师", "教二202", 2, 5, 2, "1-16")),
+                1_800_000_000_000L, "", 1, 0);
+        assertEquals(2, store.allLessons().size());
+    }
+
+    @Test
+    public void mergeLessonsRecordsSemesterLength() {
+        store.mergeLessons(Collections.singletonList(
+                new Lesson("L1", "高数", "", "", 1, 1, 2, "1")),
+                1_800_000_000_000L, "", 1, 25);
+        assertEquals(25, store.scheduleMaxWeek());
+    }
+
+    @Test
+    public void mergeLessonsTreatsEmptyWeeksAsEveryWeek() {
+        // An empty weeks string means "every week" everywhere else in the app; a merge
+        // must not narrow it, or the lesson would vanish from weeks it actually runs in.
+        store.mergeLessons(Collections.singletonList(
+                new Lesson("L1", "示例课程", "", "", 4, 7, 2, "")),
+                1_800_000_000_000L, "", 1, 0);
+        store.mergeLessons(Collections.singletonList(
+                new Lesson("L1", "示例课程", "", "", 4, 7, 2, "7")),
+                1_800_000_000_000L, "", 7, 0);
+        assertEquals("", store.allLessons().get(0).weeks);
+        assertTrue("still active in every week",
+                ScheduleMath.isActiveInWeek(store.allLessons().get(0), 12));
     }
 
     private static boolean containsLessonId(List<Lesson> lessons, String id) {

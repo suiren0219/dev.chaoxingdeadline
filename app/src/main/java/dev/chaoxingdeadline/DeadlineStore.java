@@ -26,6 +26,8 @@ public final class DeadlineStore extends SQLiteOpenHelper {
     private static final String KEY_SCHEDULE_UPDATED_AT = "updated_at";
     /** Teaching weeks already pulled from the host, as string set (see mergeLessons). */
     private static final String KEY_FETCHED_WEEKS = "fetched_weeks";
+    /** Semester length stated by the curriculum payload (maxWeek). */
+    private static final String KEY_MAX_WEEK = "max_week";
     private static final String KEY_LEGACY_COURSES = "courses";
     private static final String KEY_BLOCKED_RULES = "rules";
     private static final String TYPE_ALL = "\u5168\u90e8";
@@ -920,19 +922,27 @@ public final class DeadlineStore extends SQLiteOpenHelper {
     /**
      * Merge one teaching week's capture into the stored timetable.
      *
-     * The endpoint answers a single week per request, and each lesson it returns carries
-     * the whole week list that lesson runs in. Replacing the table on every capture is
-     * therefore wrong: pulling week 5 would wipe weeks 1-4 and 6-16. Lessons are merged
-     * by id instead, so weekly captures accumulate into the full semester.
+     * The mobile endpoint answers a single week per request and stamps every lesson it
+     * returns with just that week, so replacing the table would leave only the last week
+     * pulled. Merging is keyed on the lesson's *slot* (course name + weekday + first
+     * section), not on the server's lesson id: verified against the live endpoint, the id
+     * changes between weeks for the same class, so an id-keyed merge duplicates every
+     * lesson once per week swept.
+     *
+     * Week lists are unioned, which is what reconstructs a real semester from per-week
+     * answers: a course running weeks 1-16 arrives as "1", "2", … "16" and accumulates
+     * into "1-16". An empty weeks string means "every week" (see ScheduleMath), and that
+     * reading wins over any narrower list so a merge can never hide a lesson.
      *
      * The table is cleared only when the curriculum itself changed — a firstWeekDate that
      * moved by more than a day means a new semester, where every stored row is stale.
      *
      * @param week the teaching week this payload describes; {@code <= 0} when unknown
-     *             (a passive page capture), in which case only the rows are merged.
+     *             (a passive page capture), in which case rows are still merged in.
+     * @param maxWeek semester length as reported by the curriculum, 0 when absent.
      */
     public void mergeLessons(List<Lesson> lessons, long firstWeekDate, String sectionTimesJson,
-                             int week) {
+                             int week, int maxWeek) {
         SharedPreferences prefs = schedulePrefs();
         long storedFirstWeek = prefs.getLong(KEY_FIRST_WEEK_DATE, 0L);
         // A day of slack absorbs date-vs-timestamp and timezone wobble in the payload;
@@ -940,13 +950,41 @@ public final class DeadlineStore extends SQLiteOpenHelper {
         boolean curriculumChanged = firstWeekDate > 0L && storedFirstWeek > 0L
                 && Math.abs(firstWeekDate - storedFirstWeek) > 24L * 60L * 60L * 1000L;
 
+        Map<String, Lesson> storedBySlot = new HashMap<>();
+        for (Lesson stored : allLessons()) {
+            storedBySlot.put(Lesson.slotKey(stored), stored);
+        }
+
         SQLiteDatabase db = getWritableDatabase();
         db.beginTransaction();
         try {
             if (curriculumChanged) {
                 db.delete("lessons", null, null);
+                storedBySlot.clear();
             }
-            writeLessonRows(db, lessons);
+            if (lessons != null) {
+                long now = System.currentTimeMillis();
+                for (Lesson incoming : lessons) {
+                    if (incoming == null || incoming.name == null || incoming.name.isEmpty()
+                            || incoming.dayOfWeek <= 0 || incoming.beginSection <= 0) {
+                        continue;
+                    }
+                    String slot = Lesson.slotKey(incoming);
+                    Lesson stored = storedBySlot.get(slot);
+                    String id = stored != null && stored.id != null && !stored.id.isEmpty()
+                            ? stored.id
+                            : (incoming.id == null || incoming.id.isEmpty()
+                            ? incoming.stableId() : incoming.id);
+                    String weeks = stored == null ? incoming.weeks
+                            : ScheduleMath.weeksMerge(stored.weeks, incoming.weeks);
+                    writeLessonRow(db, id, incoming, weeks, now);
+                    // Later weeks in the same payload must see this row too.
+                    Lesson merged = new Lesson(id, incoming.name, incoming.teacher,
+                            incoming.location, incoming.dayOfWeek, incoming.beginSection,
+                            incoming.sections, weeks);
+                    storedBySlot.put(slot, merged);
+                }
+            }
             db.setTransactionSuccessful();
         } finally {
             db.endTransaction();
@@ -962,8 +1000,16 @@ public final class DeadlineStore extends SQLiteOpenHelper {
             fetched.add(String.valueOf(week));
             editor.putStringSet(KEY_FETCHED_WEEKS, fetched);
         }
+        if (maxWeek > 0) {
+            editor.putInt(KEY_MAX_WEEK, maxWeek);
+        }
         editor.apply();
         writeScheduleMeta(firstWeekDate, sectionTimesJson);
+    }
+
+    /** Semester length reported by the school, 0 when no payload has stated one. */
+    public int scheduleMaxWeek() {
+        return schedulePrefs().getInt(KEY_MAX_WEEK, 0);
     }
 
     private void writeLessonRows(SQLiteDatabase db, List<Lesson> lessons) {
@@ -976,19 +1022,25 @@ public final class DeadlineStore extends SQLiteOpenHelper {
                     || lesson.dayOfWeek <= 0 || lesson.beginSection <= 0) {
                 continue;
             }
-            ContentValues values = new ContentValues();
-            values.put("id", lesson.id == null || lesson.id.isEmpty()
-                    ? lesson.stableId() : lesson.id);
-            values.put("name", lesson.name);
-            values.put("teacher", lesson.teacher);
-            values.put("location", lesson.location);
-            values.put("day_of_week", lesson.dayOfWeek);
-            values.put("begin_section", lesson.beginSection);
-            values.put("sections", lesson.sections <= 0 ? 1 : lesson.sections);
-            values.put("weeks", lesson.weeks);
-            values.put("updated_at", now);
-            db.replace("lessons", null, values);
+            writeLessonRow(db, lesson.id == null || lesson.id.isEmpty()
+                    ? lesson.stableId() : lesson.id, lesson, lesson.weeks, now);
         }
+    }
+
+    private void writeLessonRow(SQLiteDatabase db, String id, Lesson lesson, String weeks, long now) {
+        ContentValues values = new ContentValues();
+        values.put("id", id);
+        values.put("name", lesson.name);
+        values.put("teacher", lesson.teacher);
+        values.put("location", lesson.location);
+        values.put("day_of_week", lesson.dayOfWeek);
+        values.put("begin_section", lesson.beginSection);
+        values.put("sections", lesson.sections <= 0 ? 1 : lesson.sections);
+        values.put("weeks", weeks == null ? "" : weeks);
+        // The row's own real timestamps are derived from firstWeekDate + sections, so
+        // updated_at only drives cache invalidation and the "updated at" label.
+        values.put("updated_at", now);
+        db.replace("lessons", null, values);
     }
 
     private void writeScheduleMeta(long firstWeekDate, String sectionTimesJson) {

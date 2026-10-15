@@ -9,6 +9,14 @@ import android.view.Window;
 import android.widget.LinearLayout;
 import android.widget.TextView;
 
+/**
+ * Shared view builders for every screen.
+ *
+ * These primitives are what gives the app one visual language: {@link #card()} is a
+ * frosted glass panel, {@link #sectionHeader} a muted group label, and page backgrounds
+ * come from {@link UiTheme#glassBackground}. Pages built from these inherit the style,
+ * so a screen never has to re-implement it (and cannot drift from it).
+ */
 public class BaseActivity extends Activity {
 
     protected TextView text(String value, int size, boolean bold, int color) {
@@ -40,10 +48,11 @@ public class BaseActivity extends Activity {
         return v;
     }
 
+    /** Frosted glass panel — the standard container for a group of rows. */
     protected LinearLayout card() {
         LinearLayout v = new LinearLayout(this);
         v.setOrientation(LinearLayout.VERTICAL);
-        v.setBackground(UiTheme.cardBg(this));
+        v.setBackground(UiTheme.glassCard(this, dp(20)));
         return v;
     }
 
@@ -54,21 +63,31 @@ public class BaseActivity extends Activity {
         return v;
     }
 
+    /**
+     * Page background: the glass wash sits behind the content, so translucent panels
+     * above it read as frosted rather than flat grey.
+     */
+    protected View glassBackdrop() {
+        View view = new View(this);
+        view.setBackground(UiTheme.glassBackground(this));
+        return view;
+    }
+
     protected TextView sectionHeader(String title) {
         TextView v = new TextView(this);
         v.setText(title);
         v.setTextSize(13);
         v.setTextColor(UiTheme.muted(this));
         v.setTypeface(Typeface.DEFAULT_BOLD);
-        v.setPadding(dp(4), dp(18), dp(4), dp(8));
+        v.setPadding(dp(6), dp(18), dp(6), dp(8));
         return v;
     }
 
     @SuppressWarnings("deprecation")
     protected void applySystemBars() {
         Window window = getWindow();
-        window.setStatusBarColor(UiTheme.background(this));
-        window.setNavigationBarColor(UiTheme.background(this));
+        window.setStatusBarColor(Color.TRANSPARENT);
+        window.setNavigationBarColor(Color.TRANSPARENT);
         if (!UiTheme.dark(this)) {
             window.getDecorView().setSystemUiVisibility(View.SYSTEM_UI_FLAG_LIGHT_STATUS_BAR);
         }

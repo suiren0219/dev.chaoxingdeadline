@@ -4,6 +4,7 @@ import org.json.JSONArray;
 
 import java.util.ArrayList;
 import java.util.Calendar;
+import java.util.Collection;
 import java.util.Collections;
 import java.util.Comparator;
 import java.util.LinkedHashSet;
@@ -113,6 +114,71 @@ public final class ScheduleMath {
             }
         }
         return new ArrayList<>(result);
+    }
+
+    /**
+     * Merges two weeks strings for one lesson, honouring the "empty means every week"
+     * rule that the rest of the app uses (see {@link #isActiveInWeek}).
+     *
+     * A plain union would be wrong here: unioning "every week" with "7" yields "7", which
+     * silently narrows a lesson that actually runs all term down to a single week. An
+     * empty side therefore wins and the result stays empty.
+     */
+    public static String weeksMerge(String first, String second) {
+        if (isEveryWeek(first) || isEveryWeek(second)) {
+            return "";
+        }
+        return weeksUnion(first, second);
+    }
+
+    /** Whether a weeks string means "every week" (absent or blank). */
+    public static boolean isEveryWeek(String weeks) {
+        return weeks == null || weeks.trim().isEmpty();
+    }
+
+    /**
+     * Union of two weeks strings, normalised: {@code "1-6"} + {@code "7"} → {@code "1-7"}.
+     *
+     * Needed because the mobile timetable endpoint answers one week at a time and stamps
+     * each lesson with just that week (weeks fields read "7", "8", …). Reconstructing the
+     * real week list means unioning what each sweep found.
+     */
+    public static String weeksUnion(String first, String second) {
+        LinkedHashSet<Integer> all = new LinkedHashSet<>(weeksList(first));
+        all.addAll(weeksList(second));
+        return weeksNormalized(all);
+    }
+
+    /** Formats a week set as the compact "1-8,10-16" form the servers use. */
+    public static String weeksNormalized(Collection<Integer> weeks) {
+        if (weeks == null || weeks.isEmpty()) {
+            return "";
+        }
+        ArrayList<Integer> sorted = new ArrayList<>(new LinkedHashSet<>(weeks));
+        Collections.sort(sorted);
+        StringBuilder out = new StringBuilder();
+        int runStart = sorted.get(0);
+        int runEnd = runStart;
+        for (int i = 1; i <= sorted.size(); i++) {
+            Integer week = i < sorted.size() ? sorted.get(i) : null;
+            if (week != null && week == runEnd + 1) {
+                runEnd = week;
+                continue;
+            }
+            if (out.length() > 0) {
+                out.append(',');
+            }
+            if (runStart == runEnd) {
+                out.append(runStart);
+            } else {
+                out.append(runStart).append('-').append(runEnd);
+            }
+            if (week != null) {
+                runStart = week;
+                runEnd = week;
+            }
+        }
+        return out.toString();
     }
 
     /** Section start as minutes since midnight; falls back to the default table. */

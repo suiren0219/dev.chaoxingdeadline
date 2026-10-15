@@ -36,7 +36,7 @@ public final class DeadlineWidgetConfigActivity extends BaseActivity {
     private View buildContent() {
         LinearLayout root = new LinearLayout(this);
         root.setOrientation(LinearLayout.VERTICAL);
-        root.setBackgroundColor(UiTheme.background(this));
+        root.setBackground(UiTheme.glassBackground(this));
         root.setPadding(dp(20), statusBarHeight() + dp(8), dp(20), dp(16));
 
         root.addView(titleBar("小组件设置"), new LinearLayout.LayoutParams(-1, dp(48)));
