@@ -122,6 +122,11 @@ public abstract class DeadlineWidgetProvider extends AppWidgetProvider {
         }
     }
 
+    /** Test hook: render the 2x2 card through its real path, with no widgets registered. */
+    static RemoteViews buildForTest(Context context) {
+        return DeadlineWidgetCompact.build(context, pendingItems(context));
+    }
+
     /** Pending items: not submitted, not due yet, not blocked, inside the widget window. */
     static List<DeadlineItem> pendingItems(Context context) {
         ArrayList<DeadlineItem> pending = new ArrayList<>();

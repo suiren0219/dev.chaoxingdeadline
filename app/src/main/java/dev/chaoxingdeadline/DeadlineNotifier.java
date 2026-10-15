@@ -206,7 +206,14 @@ public final class DeadlineNotifier {
             manager.cancel(CLASS_NOTIFICATION_ID);
             return;
         }
+        // No class left today is the normal state every evening and before the first
+        // timetable capture, so it clears the notification and returns rather than
+        // dereferencing a lesson that is not there.
         Lesson lesson = reminderLesson(context);
+        if (lesson == null) {
+            manager.cancel(CLASS_NOTIFICATION_ID);
+            return;
+        }
         DeadlineStore store = new DeadlineStore(context);
         long firstWeekDate = store.scheduleFirstWeekDate();
         String sectionTimes = store.scheduleSectionTimes();

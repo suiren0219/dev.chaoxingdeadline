@@ -109,7 +109,30 @@ public final class DeadlineScheduleWidget extends AppWidgetProvider {
         return calendar.get(Calendar.HOUR_OF_DAY) >= EVENING_HOUR;
     }
 
+    /**
+     * Test hook: build one face through the real path, with the row budget forced.
+     *
+     * {@code build} reads its face from SharedPreferences and its row count from the
+     * launcher's reported widget size, neither of which a unit test can control from
+     * outside. This enters the same code with both pinned.
+     */
+    static RemoteViews buildForTest(Context context, int appWidgetId, int face) {
+        return buildForTest(context, appWidgetId, face, -1);
+    }
+
+    static RemoteViews buildForTest(Context context, int appWidgetId, int face, int forcedRows) {
+        statePrefs(context).edit().putInt(KEY_FACE + appWidgetId, face).apply();
+        return forcedRows > 0
+                ? buildWithBudget(context, appWidgetId, forcedRows)
+                : build(context, appWidgetId);
+    }
+
     private static RemoteViews build(Context context, int appWidgetId) {
+        return buildWithBudget(context, appWidgetId, -1);
+    }
+
+    /** @param forcedRows row budget to use instead of reading the widget's height; -1 to read it. */
+    private static RemoteViews buildWithBudget(Context context, int appWidgetId, int forcedRows) {
         RemoteViews views = new RemoteViews(context.getPackageName(), R.layout.widget_schedule);
         SharedPreferences prefs = statePrefs(context);
         boolean timetableFace = prefs.getInt(KEY_FACE + appWidgetId, FACE_TIMETABLE) == FACE_TIMETABLE;
@@ -130,7 +153,7 @@ public final class DeadlineScheduleWidget extends AppWidgetProvider {
                 DeadlineWidgetProvider.accent(context));
 
         views.removeAllViews(R.id.s_rows);
-        int rowBudget = rowBudget(context, appWidgetId);
+        int rowBudget = forcedRows > 0 ? forcedRows : rowBudget(context, appWidgetId);
         if (timetableFace) {
             buildTimetableFace(context, views, store, now, firstWeekDate, sectionTimes, rowBudget);
             views.setViewVisibility(R.id.s_note, View.VISIBLE);

@@ -293,7 +293,7 @@ public final class ScheduleMath {
             return result;
         }
         for (Lesson lesson : lessons) {
-            if (lesson.dayOfWeek == day && isActiveInWeek(lesson, week)) {
+            if (lesson != null && lesson.dayOfWeek == day && isActiveInWeek(lesson, week)) {
                 result.add(lesson);
             }
         }
@@ -310,7 +310,7 @@ public final class ScheduleMath {
             return result;
         }
         for (Lesson lesson : lessons) {
-            if (lesson.dayOfWeek == day && isActiveInWeek(lesson, week)) {
+            if (lesson != null && lesson.dayOfWeek == day && isActiveInWeek(lesson, week)) {
                 result.add(lesson);
             }
         }
