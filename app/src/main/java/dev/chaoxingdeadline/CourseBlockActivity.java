@@ -116,7 +116,7 @@ public final class CourseBlockActivity extends BaseActivity {
 
     private View actionRow(String iconValue, String title, String subtitle) {
         LinearLayout row = baseRow(iconValue, title, subtitle);
-        row.setBackground(UiTheme.cardBg(this));
+        row.setBackground(UiTheme.glassCard(this, dp(16)));
         return row;
     }
 

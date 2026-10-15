@@ -597,7 +597,7 @@ public final class SettingsActivity extends BaseActivity {
         row.setPadding(dp(16), dp(15), dp(16), dp(15));
         row.setMinimumHeight(dp(70));
         if (standalone) {
-            row.setBackground(UiTheme.cardBg(this));
+            row.setBackground(UiTheme.glassCard(this, dp(16)));
         }
 
         LinearLayout texts = new LinearLayout(this);

@@ -210,7 +210,7 @@ public final class DeadlineWidgetConfigActivity extends BaseActivity {
 
     private View actionRow(String title, String subtitle) {
         LinearLayout row = innerActionRow(title, subtitle);
-        row.setBackground(UiTheme.cardBg(this));
+        row.setBackground(UiTheme.glassCard(this, dp(16)));
         return row;
     }
 

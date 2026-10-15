@@ -339,7 +339,7 @@ public final class ScheduleActivity extends BaseActivity {
     private View weekSwitcher(int week, int currentWeek, long firstWeekDate) {
         LinearLayout bar = hbox();
         bar.setPadding(dp(6), dp(6), dp(6), dp(6));
-        bar.setBackground(UiTheme.cardBg(this, 14));
+        bar.setBackground(UiTheme.glassCard(this, dp(14)));
 
         TextView prev = icon("‹", 26, UiTheme.accent(this));
         prev.setOnClickListener(v -> {

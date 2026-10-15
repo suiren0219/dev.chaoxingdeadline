@@ -627,7 +627,7 @@ public final class MainActivity extends BaseActivity implements App.ServiceListe
         chip.setOrientation(LinearLayout.VERTICAL);
         chip.setGravity(Gravity.CENTER);
         chip.setPadding(dp(12), dp(14), dp(12), dp(14));
-        chip.setBackground(UiTheme.cardBg(this, 14));
+        chip.setBackground(UiTheme.glassCard(this, dp(14)));
 
         countView.setText("0");
         countView.setTextSize(22);
@@ -697,7 +697,7 @@ public final class MainActivity extends BaseActivity implements App.ServiceListe
         TextView tv = text(label, 14, active, active ? UiTheme.accent(this) : UiTheme.muted(this));
         tv.setGravity(Gravity.CENTER);
         tv.setPadding(dp(12), dp(10), dp(12), dp(10));
-        tv.setBackground(UiTheme.cardBg(this, 12));
+        tv.setBackground(UiTheme.glassCard(this, dp(12)));
         return tv;
     }
 
@@ -809,7 +809,8 @@ public final class MainActivity extends BaseActivity implements App.ServiceListe
         LinearLayout card = new LinearLayout(this);
         card.setOrientation(LinearLayout.HORIZONTAL);
         card.setPadding(dp(16), dp(15), dp(16), dp(15));
-        card.setBackground(urgent ? UiTheme.fillOnly(this, UiTheme.dangerBg(this), dp(16)) : UiTheme.cardBg(this, 16));
+        card.setBackground(urgent ? UiTheme.fillOnly(this, UiTheme.dangerBg(this), dp(16))
+                : UiTheme.glassCard(this, dp(16)));
         card.setAlpha(done ? 0.55f : 1f);
 
         TextView badge = new TextView(this);
