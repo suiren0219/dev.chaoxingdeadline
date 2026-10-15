@@ -85,7 +85,7 @@ public final class AboutActivity extends BaseActivity {
         content.addView(disclaimer, groupParams());
 
         View maintenance = actionRow("维护状态",
-                "本 fork 已停止维护，1.18.0 为最后一个版本；不再接收新功能与适配，代码与文档保持现状。");
+                "本 fork 仅维护作业/章节提醒这一条核心功能。当前版本 1.19.0。");
         content.addView(maintenance, groupParams());
 
         return root;
