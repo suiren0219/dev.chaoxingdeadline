@@ -192,6 +192,11 @@ public final class MainActivity extends BaseActivity implements App.ServiceListe
         return bar;
     }
 
+    /** Test seam: lets the launch test switch tabs the way the tab bar does. */
+    void showTabForTest(int index) {
+        showTab(index);
+    }
+
     /** Swaps the content area and repaints the tab labels. */
     private void showTab(int index) {
         selectedTab = index;
@@ -207,10 +212,24 @@ public final class MainActivity extends BaseActivity implements App.ServiceListe
         if (contentHost == null) {
             return;
         }
+        // The outgoing tab's views are discarded with it; clearing the references keeps
+        // reload() from writing into detached views instead of the new tab's.
+        itemList = null;
+        emptyContainer = null;
+        activeBadge = null;
+        statusText = null;
+        countPending = null;
+        countExpired = null;
+        countBlocked = null;
+        searchInput = null;
+        typeFilter = null;
+
         contentHost.removeAllViews();
         View content = index == TAB_TODAY ? buildTodayTab()
                 : index == TAB_TIMETABLE ? buildTimetableTab() : buildMineTab();
         contentHost.addView(content, new FrameLayout.LayoutParams(-1, -1));
+        // Paint the views this tab just built (and refresh the deadline list it shows).
+        reload(false);
     }
 
     /** Page frame: title (optional) plus the padded content column below it. */
@@ -659,6 +678,14 @@ public final class MainActivity extends BaseActivity implements App.ServiceListe
         return p;
     }
 
+    /**
+     * Refreshes data and paints whichever views the current tab owns.
+     *
+     * Every write is guarded: the three tabs build different views, so the ones that are
+     * not on screen are null by design. Writing to them unguarded is what crashed the app
+     * on launch once the home screen became tabbed (the activation labels live on 我的,
+     * while the app opens on 今日).
+     */
     private void reload(boolean firstLoad) {
         items.clear();
         items.addAll(store.activeItems());
@@ -669,9 +696,14 @@ public final class MainActivity extends BaseActivity implements App.ServiceListe
         rebuildItemList();
 
         Activation activation = readActivation();
-        activeBadge.setText(activation.title);
-        activeBadge.setTextColor(activation.active ? UiTheme.successText(this) : UiTheme.warningText(this));
-        statusText.setText(activation.detail);
+        if (activeBadge != null) {
+            activeBadge.setText(activation.title);
+            activeBadge.setTextColor(activation.active
+                    ? UiTheme.successText(this) : UiTheme.warningText(this));
+        }
+        if (statusText != null) {
+            statusText.setText(activation.detail);
+        }
 
         int pending = 0, expired = 0, blocked = store.blockedCourses().size();
         long now = System.currentTimeMillis();
@@ -679,18 +711,23 @@ public final class MainActivity extends BaseActivity implements App.ServiceListe
             if (item.submitted || item.dueAt <= now) expired++;
             else pending++;
         }
+        if (countPending != null) countPending.setText(String.valueOf(pending));
+        if (countExpired != null) countExpired.setText(String.valueOf(expired));
+        if (countBlocked != null) countBlocked.setText(String.valueOf(blocked));
 
-        countPending.setText(String.valueOf(pending));
-        countExpired.setText(String.valueOf(expired));
-        countBlocked.setText(String.valueOf(blocked));
-
-        boolean empty = items.isEmpty();
-        itemList.setVisibility(empty ? View.GONE : View.VISIBLE);
-        emptyContainer.setVisibility(empty ? View.VISIBLE : View.GONE);
-        ((TextView) emptyContainer.getChildAt(0)).setText(activation.active
-                ? "暂无待办\n\n打开学习通后会自动捕获作业和考试截止时间。"
-                : "尚未检测到激活\n\n请在 LSPosed 中勾选本模块，作用域选择「学习通」。");
-
+        if (itemList != null) {
+            boolean empty = items.isEmpty();
+            itemList.setVisibility(empty ? View.GONE : View.VISIBLE);
+            if (emptyContainer != null) {
+                emptyContainer.setVisibility(empty ? View.VISIBLE : View.GONE);
+                View first = emptyContainer.getChildAt(0);
+                if (first instanceof TextView) {
+                    ((TextView) first).setText(activation.active
+                            ? "暂无待办\n\n打开学习通后会自动捕获作业和考试截止时间。"
+                            : "尚未检测到激活\n\n请在 LSPosed 中勾选本模块，作用域选择「学习通」。");
+                }
+            }
+        }
     }
 
     private TextView tabButton(String label, boolean active) {
@@ -717,6 +754,9 @@ public final class MainActivity extends BaseActivity implements App.ServiceListe
     }
 
     private void rebuildItemList() {
+        if (itemList == null) {
+            return;
+        }
         itemList.removeAllViews();
         if ("week".equals(viewMode)) {
             renderWeek();
