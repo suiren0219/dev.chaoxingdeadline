@@ -7,10 +7,10 @@
     <string name="widget_empty">暂无待办\n打开学习通自动刷新</string>
     <string name="widget_compact_name">待办小卡</string>
     <string name="widget_compact_description">在桌面查看未完成待办数量和最近截止时间</string>
-    <string name="widget_list_name">待办列表</string>
-    <string name="widget_list_description">在桌面查看全部未完成的作业和考试</string>
-    <string name="widget_schedule_name">今日课程</string>
-    <string name="widget_schedule_description">在桌面查看今天的课程，上课中的课程会高亮</string>
+    <string name="widget_schedule_name">课程 / 待办</string>
+    <string name="widget_schedule_description">一个面板看两样：今天的课程与待办截止，点标题旁的 ⇄ 切换</string>
+    <string name="widget_schedule_fetch">获取课表</string>
+    <string name="widget_switch_face">切换课程 / 待办</string>
     <string name="widget_schedule_empty">今天没课\n打开学习通后自动获取课表</string>
     <string name="widget_refresh">刷新</string>
     <string name="widget_refresh_icon">⟳</string>

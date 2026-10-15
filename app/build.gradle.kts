@@ -19,8 +19,8 @@ android {
         applicationId = "dev.chaoxingdeadline"
         minSdk = 26
         targetSdk = 36
-        versionCode = 26
-        versionName = "1.15.1"
+        versionCode = 27
+        versionName = "1.16.0"
     }
 
     signingConfigs {
@@ -40,6 +40,17 @@ android {
             isShrinkResources = true
             proguardFiles("proguard-rules.pro")
             signingConfig = signingConfigs.findByName("release") ?: signingConfigs.getByName("debug")
+        }
+        debug {
+            // Signed with the same key as release whenever one is configured.
+            //
+            // The debug variant used to fall back to AGP's auto-generated debug key,
+            // which CI regenerates on every run — so each release was signed by a
+            // different certificate and Android refused to update in place, forcing an
+            // uninstall (and losing data) on every version. Signing both variants with
+            // the configured key keeps one stable signature; isDebuggable still makes the
+            // build debuggable, which is what the debug variant is actually for.
+            signingConfig = signingConfigs.findByName("release")
         }
     }
 

@@ -35,8 +35,12 @@ public final class DeadlineReceiver extends BroadcastReceiver {
     public static final String ACTION_COURSE_SCAN_PERF = "dev.chaoxingdeadline.COURSE_SCAN_PERF";
     public static final String ACTION_SETTINGS_UPDATE = "dev.chaoxingdeadline.SETTINGS_UPDATE";
     public static final String ACTION_WIDGET_REFRESH = "dev.chaoxingdeadline.WIDGET_REFRESH";
-    /** Timetable widget: flip its card to the next lesson (sent by the widget itself). */
+    /** Merged widget: flip to the next lesson card (sent by the widget itself). */
     public static final String ACTION_SCHEDULE_WIDGET_NEXT = "dev.chaoxingdeadline.SCHEDULE_WIDGET_NEXT";
+    /** Merged widget: switch between its timetable and deadline faces. */
+    public static final String ACTION_SCHEDULE_WIDGET_FACE = "dev.chaoxingdeadline.SCHEDULE_WIDGET_FACE";
+    /** Merged widget's empty state: pull the timetable from the host. */
+    public static final String ACTION_WIDGET_FETCH_TIMETABLE = "dev.chaoxingdeadline.WIDGET_FETCH_TIMETABLE";
     public static final String ACTION_DAILY_DIGEST = "dev.chaoxingdeadline.DAILY_DIGEST";
     public static final String ACTION_SNOOZE = "dev.chaoxingdeadline.SNOOZE";
     public static final String ACTION_SNOOZE_FIRE = "dev.chaoxingdeadline.SNOOZE_FIRE";
@@ -302,11 +306,19 @@ public final class DeadlineReceiver extends BroadcastReceiver {
         }
         if (ACTION_WIDGET_REFRESH.equals(intent.getAction())) {
             DeadlineWidgetProvider.updateAll(context);
-            DeadlineScheduleWidget.updateAll(context);
             return;
         }
         if (ACTION_SCHEDULE_WIDGET_NEXT.equals(intent.getAction())) {
             DeadlineScheduleWidget.advancePage(context, intent.getIntExtra(EXTRA_APPWIDGET_ID, -1));
+            return;
+        }
+        if (ACTION_SCHEDULE_WIDGET_FACE.equals(intent.getAction())) {
+            DeadlineScheduleWidget.toggleFace(context, intent.getIntExtra(EXTRA_APPWIDGET_ID, -1));
+            return;
+        }
+        if (ACTION_WIDGET_FETCH_TIMETABLE.equals(intent.getAction())) {
+            // Asked for from the widget's empty state; the host does the actual pulling.
+            RefreshBridge.requestWholeSemester(context);
             return;
         }
         if (!ACTION_ITEM.equals(intent.getAction())) {

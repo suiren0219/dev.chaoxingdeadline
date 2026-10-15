@@ -1,0 +1,11 @@
+<?xml version="1.0" encoding="utf-8"?>
+<!-- 小组件底板：深色半透明 + 大圆角，NexioSchedule 风格。
+     深色版是主用形态（截图即深色），浅色系统下由 drawable/ 的同名文件接管。 -->
+<shape xmlns:android="http://schemas.android.com/apk/res/android"
+    android:shape="rectangle">
+    <corners android:radius="28dp" />
+    <solid android:color="#E6151720" />
+    <stroke
+        android:width="1dp"
+        android:color="#1FFFFFFF" />
+</shape>

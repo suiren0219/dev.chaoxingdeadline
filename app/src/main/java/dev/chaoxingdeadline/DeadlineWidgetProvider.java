@@ -31,6 +31,8 @@ public abstract class DeadlineWidgetProvider extends AppWidgetProvider {
     private static final int TEXT_DARK = 0xE6FFFFFF;
     private static final int MUTED_LIGHT = 0x99000000;
     private static final int MUTED_DARK = 0xFF787E96;
+    /** Secondary text on the merged widget's translucent panel (white in both themes). */
+    private static final int GLASS_MUTED = 0x99FFFFFF;
     private static final int DANGER_LIGHT = 0xFFE94634;
     private static final int DANGER_DARK = 0xFFF12522;
 
@@ -39,10 +41,30 @@ public abstract class DeadlineWidgetProvider extends AppWidgetProvider {
     }
 
     static int primaryText(Context context) {
+        return primaryText(context, false);
+    }
+
+    /**
+     * @param onGlass true when the text sits on the merged widget's translucent panel,
+     *                which is dark in both themes (it is drawn over the wallpaper, with
+     *                its own dark or light scrim), so its text is white in both.
+     */
+    static int primaryText(Context context, boolean onGlass) {
+        if (onGlass) {
+            return TEXT_DARK;
+        }
         return UiTheme.dark(context) ? TEXT_DARK : TEXT_LIGHT;
     }
 
     static int mutedText(Context context) {
+        return mutedText(context, false);
+    }
+
+    /** Muted text for the glass panel; see {@link #primaryText(Context, boolean)}. */
+    static int mutedText(Context context, boolean onGlass) {
+        if (onGlass) {
+            return GLASS_MUTED;
+        }
         return UiTheme.dark(context) ? MUTED_DARK : MUTED_LIGHT;
     }
 
@@ -81,8 +103,9 @@ public abstract class DeadlineWidgetProvider extends AppWidgetProvider {
             List<DeadlineItem> items = pendingItems(context);
             updateIds(context, manager, DeadlineWidgetCompact.class,
                     DeadlineWidgetCompact.build(context, items));
-            updateIds(context, manager, DeadlineWidgetList.class,
-                    DeadlineWidgetList.build(context, items));
+            // The merged widget carries the deadline face (and the timetable face), so it
+            // is rendered here too: one data change repaints every widget.
+            DeadlineScheduleWidget.updateAll(context);
         } catch (Throwable ignored) {
         }
     }
@@ -151,6 +174,23 @@ public abstract class DeadlineWidgetProvider extends AppWidgetProvider {
                 PendingIntent.FLAG_UPDATE_CURRENT | PendingIntent.FLAG_IMMUTABLE);
     }
 
+    /**
+     * "Fetch timetable" action offered by the widget's empty state, so a user who has never
+     * opened the app can pull a timetable straight from the home screen. Goes through the
+     * module app because only it can address the Chaoxing host (see RefreshBridge).
+     */
+    static PendingIntent fetchSemesterPendingIntent(Context context) {
+        Intent intent = new Intent(context, DeadlineReceiver.class)
+                .setAction(DeadlineReceiver.ACTION_WIDGET_FETCH_TIMETABLE)
+                .setPackage(context.getPackageName());
+        BridgeAuth.attach(context, intent);
+        return PendingIntent.getBroadcast(
+                context,
+                "widget_fetch_timetable".hashCode(),
+                intent,
+                PendingIntent.FLAG_UPDATE_CURRENT | PendingIntent.FLAG_IMMUTABLE);
+    }
+
     static PendingIntent mainPendingIntent(Context context) {
         Intent intent = new Intent();
         intent.setComponent(new ComponentName(context, MainActivity.class));
@@ -180,6 +220,46 @@ public abstract class DeadlineWidgetProvider extends AppWidgetProvider {
 
     static boolean urgent(DeadlineItem item) {
         return item.dueAt - System.currentTimeMillis() <= URGENT_MS;
+    }
+
+
+    /**
+     * One deadline row: badge, title, course and remaining time.
+     *
+     * @param onGlass the row sits on the merged widget's translucent panel, which is dark
+     *                in both themes, so its text is white in both. Rows drawn on a
+     *                theme-following background keep the theme-dependent colours.
+     */
+    static RemoteViews deadlineRow(Context context, DeadlineItem item, int index, boolean onGlass) {
+        RemoteViews row = new RemoteViews(context.getPackageName(), R.layout.widget_row);
+        row.setTextViewText(R.id.r_badge, item.type);
+        row.setTextColor(R.id.r_badge, typeColor(context, item.type));
+
+        String title = item.title == null || item.title.isEmpty() ? "未命名" : item.title;
+        row.setTextViewText(R.id.r_title, title);
+        row.setTextColor(R.id.r_title, primaryText(context, onGlass));
+
+        String course = AppSettings.widgetShowCourse(context)
+                ? (item.course == null ? "" : item.course.trim())
+                : "";
+        if (course.isEmpty()) {
+            row.setViewVisibility(R.id.r_course, android.view.View.GONE);
+        } else {
+            row.setViewVisibility(R.id.r_course, android.view.View.VISIBLE);
+            row.setTextViewText(R.id.r_course, course);
+            row.setTextColor(R.id.r_course, mutedText(context, onGlass));
+        }
+
+        row.setTextViewText(R.id.r_due, dueLine(item));
+        row.setTextColor(R.id.r_due, urgent(item)
+                ? dangerText(context) : mutedText(context, onGlass));
+        row.setOnClickPendingIntent(R.id.row_root, itemPendingIntent(context, item, 1000 + index));
+        return row;
+    }
+
+    /** Number of deadline rows a widget face shows before it reads as a wall of text. */
+    static int todoRowLimit() {
+        return 4;
     }
 
     /** Two-line right column: absolute deadline over remaining time. */

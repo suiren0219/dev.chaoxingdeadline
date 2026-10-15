@@ -1,78 +1,154 @@
 <?xml version="1.0" encoding="utf-8"?>
+<!--
+  合并小组件：一页课表、一页待办，点标题右侧的切换按钮翻面。
+  浅色/深色文字与面板底色在渲染时按主题上色（见 DeadlineScheduleWidget）。
+
+  为什么用 ViewFlipper 而不是两个独立小组件：用户要的是「一个面板、点击切换」。
+  ViewFlipper 继承 ViewAnimator（FrameLayout 后代），可以静态 addView 填充；
+  StackView/ListView 继承 AdapterView，其 addView 会抛 UnsupportedOperationException，
+  只能靠 RemoteViewsService 才能填数据。
+-->
 <LinearLayout xmlns:android="http://schemas.android.com/apk/res/android"
     android:id="@+id/widget_schedule_root"
     android:layout_width="match_parent"
     android:layout_height="match_parent"
-    android:background="@drawable/widget_bg"
+    android:background="@drawable/widget_glass_bg"
     android:orientation="vertical"
-    android:padding="12dp">
+    android:padding="16dp">
 
-    <!-- 标题行：周次 + 刷新 -->
+    <!-- 标题行：标题 + 副标题 + 切换 + 刷新 -->
     <LinearLayout
         android:layout_width="match_parent"
         android:layout_height="wrap_content"
         android:gravity="center_vertical"
         android:orientation="horizontal">
 
-        <TextView
-            android:id="@+id/s_header"
+        <LinearLayout
             android:layout_width="0dp"
             android:layout_height="wrap_content"
             android:layout_weight="1"
-            android:text="今日课程"
-            android:textColor="#E6000000"
-            android:textSize="13sp"
+            android:orientation="vertical">
+
+            <TextView
+                android:id="@+id/s_header"
+                android:layout_width="match_parent"
+                android:layout_height="wrap_content"
+                android:ellipsize="end"
+                android:maxLines="1"
+                android:text="第 7 周 · 今天 3 节课"
+                android:textColor="#E6FFFFFF"
+                android:textSize="15sp"
+                android:textStyle="bold" />
+
+            <TextView
+                android:id="@+id/s_updated"
+                android:layout_width="match_parent"
+                android:layout_height="wrap_content"
+                android:layout_marginTop="2dp"
+                android:ellipsize="end"
+                android:maxLines="1"
+                android:text="更新于 10-15 16:06"
+                android:textColor="#99FFFFFF"
+                android:textSize="11sp"
+                android:visibility="gone" />
+        </LinearLayout>
+
+        <!-- 切换面：课表 ⇄ 待办 -->
+        <TextView
+            android:id="@+id/s_switch"
+            android:layout_width="wrap_content"
+            android:layout_height="wrap_content"
+            android:layout_marginStart="8dp"
+            android:contentDescription="@string/widget_switch_face"
+            android:paddingStart="8dp"
+            android:paddingEnd="8dp"
+            android:paddingTop="2dp"
+            android:paddingBottom="2dp"
+            android:text="⇄"
+            android:textColor="#99FFFFFF"
+            android:textSize="15sp"
             android:textStyle="bold" />
 
         <TextView
             android:id="@+id/s_refresh"
             android:layout_width="wrap_content"
             android:layout_height="wrap_content"
-            android:layout_marginStart="8dp"
+            android:layout_marginStart="6dp"
             android:contentDescription="@string/widget_refresh"
-            android:paddingStart="4dp"
-            android:paddingEnd="2dp"
+            android:paddingStart="8dp"
+            android:paddingEnd="4dp"
+            android:paddingTop="2dp"
+            android:paddingBottom="2dp"
             android:text="@string/widget_refresh_icon"
-            android:textColor="#99000000"
-            android:textSize="13sp"
+            android:textColor="#99FFFFFF"
+            android:textSize="14sp"
             android:textStyle="bold" />
     </LinearLayout>
 
-    <!-- 更新时间 -->
-    <TextView
-        android:id="@+id/s_updated"
-        android:layout_width="match_parent"
-        android:layout_height="wrap_content"
-        android:layout_marginTop="2dp"
-        android:text="更新于 10-03 12:00"
-        android:textColor="#99000000"
-        android:textSize="10sp"
-        android:visibility="gone" />
-
-    <!-- 翻页区：一页一张课程卡片，点卡片翻到下一节课。
-         ViewFlipper 继承 ViewAnimator（FrameLayout 后代），静态 addView 填充合法；
-         StackView 走 AdapterView，addView 会抛 UnsupportedOperationException。 -->
+    <!-- 双面容器 -->
     <ViewFlipper
         android:id="@+id/s_flipper"
         android:layout_width="match_parent"
         android:layout_height="0dp"
-        android:layout_marginTop="8dp"
+        android:layout_marginTop="12dp"
         android:layout_weight="1"
         android:animateFirstView="false"
         android:inAnimation="@android:anim/fade_in"
         android:outAnimation="@android:anim/fade_out" />
 
-    <!-- 空态提示 -->
-    <TextView
+    <!-- 课表面（无课时） -->
+    <LinearLayout
         android:id="@+id/s_empty"
         android:layout_width="match_parent"
         android:layout_height="0dp"
+        android:layout_marginTop="12dp"
         android:layout_weight="1"
         android:gravity="center"
-        android:lineSpacingExtra="3dp"
-        android:text="@string/widget_schedule_empty"
-        android:textColor="#99000000"
-        android:textSize="12sp"
-        android:visibility="gone" />
-</LinearLayout>
+        android:orientation="vertical">
 
+        <TextView
+            android:id="@+id/s_empty_text"
+            android:layout_width="match_parent"
+            android:layout_height="wrap_content"
+            android:gravity="center"
+            android:lineSpacingExtra="4dp"
+            android:text="@string/widget_schedule_empty"
+            android:textColor="#99FFFFFF"
+            android:textSize="13sp" />
+
+        <TextView
+            android:id="@+id/s_empty_action"
+            android:layout_width="wrap_content"
+            android:layout_height="wrap_content"
+            android:layout_marginTop="10dp"
+            android:paddingStart="16dp"
+            android:paddingEnd="16dp"
+            android:paddingTop="8dp"
+            android:paddingBottom="8dp"
+            android:text="@string/widget_schedule_fetch"
+            android:textColor="#FFFFFF"
+            android:textSize="13sp"
+            android:textStyle="bold" />
+    </LinearLayout>
+
+    <!-- 待办面（无待办时） -->
+    <LinearLayout
+        android:id="@+id/s_todo_empty"
+        android:layout_width="match_parent"
+        android:layout_height="0dp"
+        android:layout_marginTop="12dp"
+        android:layout_weight="1"
+        android:gravity="center"
+        android:orientation="vertical"
+        android:visibility="gone">
+
+        <TextView
+            android:layout_width="match_parent"
+            android:layout_height="wrap_content"
+            android:gravity="center"
+            android:lineSpacingExtra="4dp"
+            android:text="@string/widget_empty"
+            android:textColor="#99FFFFFF"
+            android:textSize="13sp" />
+    </LinearLayout>
+</LinearLayout>
