@@ -58,9 +58,42 @@ public class ScheduleMathTest {
     }
 
     @Test
+    public void weeksListEnumeratesEveryListedWeek() {
+        assertEquals(Arrays.asList(3), ScheduleMath.weeksList("3"));
+        assertEquals(Arrays.asList(1, 2, 3, 4, 5, 6, 7, 8, 10),
+                ScheduleMath.weeksList("1-8,10"));
+        assertEquals("full-width separators parse too", Arrays.asList(1, 3, 5),
+                ScheduleMath.weeksList("1，3，5"));
+        assertEquals("ranges and singles can repeat without duplicating",
+                Arrays.asList(1, 2, 3), ScheduleMath.weeksList("1-3,2,3"));
+        assertEquals("a stray suffix is ignored", Arrays.asList(1, 2, 3),
+                ScheduleMath.weeksList("1-3周"));
+    }
+
+    @Test
+    public void weeksListTreatsUnparsableInputAsEveryWeek() {
+        // An empty list means "every week" everywhere it is consumed (isActiveInWeek),
+        // so a missing or nonsense weeks string must not become "no week".
+        assertTrue(ScheduleMath.weeksList(null).isEmpty());
+        assertTrue(ScheduleMath.weeksList("").isEmpty());
+        assertTrue(ScheduleMath.weeksList("   ").isEmpty());
+        assertTrue("letters carry no week numbers", ScheduleMath.weeksList("abc").isEmpty());
+        assertTrue("a backwards range is dropped", ScheduleMath.weeksList("9-4").isEmpty());
+        assertTrue("zero and negatives are dropped", ScheduleMath.weeksList("0,-3").isEmpty());
+    }
+
+    @Test
+    public void weeksListCapsRunawayRanges() {
+        // A typo like "1-9999" must not allocate thousands of entries.
+        List<Integer> capped = ScheduleMath.weeksList("1-9999");
+        assertEquals(40, capped.size());
+        assertEquals(Integer.valueOf(1), capped.get(0));
+        assertEquals(Integer.valueOf(40), capped.get(capped.size() - 1));
+    }
+
+    @Test
     public void sectionTimesComeFromTheSchoolTable() {
-        assertEquals(8 * 60, ScheduleMath.sectionStartMinutes(TIMES, 1));
-        assertEquals(8 * 60 + 45, ScheduleMath.sectionEndMinutes(TIMES, 1));
+        assertEquals(8 * 60, ScheduleMath.sectionStartMinutes(TIMES, 1));        assertEquals(8 * 60 + 45, ScheduleMath.sectionEndMinutes(TIMES, 1));
         assertEquals(10 * 60, ScheduleMath.sectionStartMinutes(TIMES, 3));
         // Unknown section falls back to the 45+10 default table.
         assertEquals(8 * 60 + 4 * 55, ScheduleMath.sectionStartMinutes(TIMES, 5));

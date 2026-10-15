@@ -29,22 +29,6 @@ public final class ScheduleActivity extends BaseActivity {
     private static final int MAX_WEEK = 30;
     private static final long REFRESH_GUARD_MS = 10_000L;
 
-    /** Course block palettes: {background, text}, light then dark theme. */
-    private static final int[][] LIGHT_COURSE_COLORS = {
-            {0xFFE3EDFF, 0xFF2B5CB8}, {0xFFFFE7EE, 0xFFB5325F},
-            {0xFFFFF3D6, 0xFF8F6500}, {0xFFDFF5EC, 0xFF14785A},
-            {0xFFEFE6FF, 0xFF6D3FC0}, {0xFFFFE9D6, 0xFFB4531A},
-            {0xFFD9F1F5, 0xFF0E7490}, {0xFFFBE3D0, 0xFF9A4A1B},
-            {0xFFE8E8F6, 0xFF4A4E8A}, {0xFFF6E2E4, 0xFFA04550},
-    };
-    private static final int[][] DARK_COURSE_COLORS = {
-            {0xFF1D2A45, 0xFF9CC0FF}, {0xFF3A1F2C, 0xFFF3A9C4},
-            {0xFF3B3117, 0xFFE8C56A}, {0xFF17362B, 0xFF7FD4B4},
-            {0xFF2C2450, 0xFFC4AEF7}, {0xFF3D2717, 0xFFF0B183},
-            {0xFF143340, 0xFF7CC7DC}, {0xFF3A2415, 0xFFE5A86F},
-            {0xFF232648, 0xFFAAB2E8}, {0xFF3B2226, 0xFFE8A3AE},
-    };
-
     private final Handler handler = new Handler(Looper.getMainLooper());
     /** Week the grid shows; <= 0 means "follow the current teaching week". */
     private int displayedWeek;
@@ -359,14 +343,22 @@ public final class ScheduleActivity extends BaseActivity {
     private View emptyWeekCard(int week) {
         LinearLayout card = card();
         card.setPadding(dp(20), dp(20), dp(20), dp(20));
-        TextView title = text("第 " + week + " 周没有课程数据", 15, true, UiTheme.text(this));
+        boolean fetched = new DeadlineStore(this).hasFetchedWeek(week);
+        // A week can look empty for two very different reasons, and telling them apart
+        // is the difference between "your timetable has a gap" and "we never asked".
+        TextView title = text(fetched ? "第 " + week + " 周没有课" : "第 " + week + " 周还没有数据",
+                15, true, UiTheme.text(this));
         card.addView(title, new LinearLayout.LayoutParams(-1, -2));
-        TextView body = text("模块默认只拉取当前周。点下面按钮向学习通请求这一周的课表。",
+        TextView body = text(fetched
+                ? "这一周的课表已经取回，周内没有安排课程。"
+                : "点下面按钮向学习通请求这一周的课表；已取回的周次会保留，不会被覆盖。",
                 12, false, UiTheme.muted(this));
         body.setPadding(0, dp(6), 0, dp(14));
         body.setLineSpacing(0f, 1.25f);
         card.addView(body, new LinearLayout.LayoutParams(-1, -2));
-        card.addView(refreshButton("获取第 " + week + " 周", week), buttonParams());
+        if (!fetched) {
+            card.addView(refreshButton("获取第 " + week + " 周", week), buttonParams());
+        }
         return card;
     }
 
@@ -428,15 +420,11 @@ public final class ScheduleActivity extends BaseActivity {
     // -- helpers --
 
     private int[] courseColors(String name) {
-        int[][] palette = UiTheme.dark(this) ? DARK_COURSE_COLORS : LIGHT_COURSE_COLORS;
-        int hash = name == null ? 0 : Math.abs(name.hashCode());
-        return palette[hash % palette.length];
+        return UiTheme.courseColors(this, name);
     }
 
     private int todayTint() {
-        int accent = UiTheme.accent(this);
-        return Color.argb(UiTheme.dark(this) ? 34 : 20, Color.red(accent),
-                Color.green(accent), Color.blue(accent));
+        return UiTheme.todayTint(this);
     }
 
     private String dateLabel(long firstWeekDate, int week, int day) {

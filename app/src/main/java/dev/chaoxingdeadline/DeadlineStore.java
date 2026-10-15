@@ -24,6 +24,8 @@ public final class DeadlineStore extends SQLiteOpenHelper {
     private static final String KEY_FIRST_WEEK_DATE = "first_week_date";
     private static final String KEY_SECTION_TIMES = "section_times";
     private static final String KEY_SCHEDULE_UPDATED_AT = "updated_at";
+    /** Teaching weeks already pulled from the host, as string set (see mergeLessons). */
+    private static final String KEY_FETCHED_WEEKS = "fetched_weeks";
     private static final String KEY_LEGACY_COURSES = "courses";
     private static final String KEY_BLOCKED_RULES = "rules";
     private static final String TYPE_ALL = "\u5168\u90e8";
@@ -906,31 +908,90 @@ public final class DeadlineStore extends SQLiteOpenHelper {
         db.beginTransaction();
         try {
             db.delete("lessons", null, null);
-            long now = System.currentTimeMillis();
-            if (lessons != null) {
-                for (Lesson lesson : lessons) {
-                    if (lesson == null || lesson.name == null || lesson.name.isEmpty()
-                            || lesson.dayOfWeek <= 0 || lesson.beginSection <= 0) {
-                        continue;
-                    }
-                    ContentValues values = new ContentValues();
-                    values.put("id", lesson.id == null || lesson.id.isEmpty()
-                            ? lesson.stableId() : lesson.id);
-                    values.put("name", lesson.name);
-                    values.put("teacher", lesson.teacher);
-                    values.put("location", lesson.location);
-                    values.put("day_of_week", lesson.dayOfWeek);
-                    values.put("begin_section", lesson.beginSection);
-                    values.put("sections", lesson.sections <= 0 ? 1 : lesson.sections);
-                    values.put("weeks", lesson.weeks);
-                    values.put("updated_at", now);
-                    db.replace("lessons", null, values);
-                }
-            }
+            writeLessonRows(db, lessons);
             db.setTransactionSuccessful();
         } finally {
             db.endTransaction();
         }
+        schedulePrefs().edit().remove(KEY_FETCHED_WEEKS).apply();
+        writeScheduleMeta(firstWeekDate, sectionTimesJson);
+    }
+
+    /**
+     * Merge one teaching week's capture into the stored timetable.
+     *
+     * The endpoint answers a single week per request, and each lesson it returns carries
+     * the whole week list that lesson runs in. Replacing the table on every capture is
+     * therefore wrong: pulling week 5 would wipe weeks 1-4 and 6-16. Lessons are merged
+     * by id instead, so weekly captures accumulate into the full semester.
+     *
+     * The table is cleared only when the curriculum itself changed — a firstWeekDate that
+     * moved by more than a day means a new semester, where every stored row is stale.
+     *
+     * @param week the teaching week this payload describes; {@code <= 0} when unknown
+     *             (a passive page capture), in which case only the rows are merged.
+     */
+    public void mergeLessons(List<Lesson> lessons, long firstWeekDate, String sectionTimesJson,
+                             int week) {
+        SharedPreferences prefs = schedulePrefs();
+        long storedFirstWeek = prefs.getLong(KEY_FIRST_WEEK_DATE, 0L);
+        // A day of slack absorbs date-vs-timestamp and timezone wobble in the payload;
+        // a real semester shift is always months away.
+        boolean curriculumChanged = firstWeekDate > 0L && storedFirstWeek > 0L
+                && Math.abs(firstWeekDate - storedFirstWeek) > 24L * 60L * 60L * 1000L;
+
+        SQLiteDatabase db = getWritableDatabase();
+        db.beginTransaction();
+        try {
+            if (curriculumChanged) {
+                db.delete("lessons", null, null);
+            }
+            writeLessonRows(db, lessons);
+            db.setTransactionSuccessful();
+        } finally {
+            db.endTransaction();
+        }
+
+        SharedPreferences.Editor editor = prefs.edit();
+        if (curriculumChanged) {
+            editor.remove(KEY_FETCHED_WEEKS);
+        }
+        if (week > 0) {
+            HashSet<String> fetched = new HashSet<>(prefs.getStringSet(KEY_FETCHED_WEEKS,
+                    Collections.emptySet()));
+            fetched.add(String.valueOf(week));
+            editor.putStringSet(KEY_FETCHED_WEEKS, fetched);
+        }
+        editor.apply();
+        writeScheduleMeta(firstWeekDate, sectionTimesJson);
+    }
+
+    private void writeLessonRows(SQLiteDatabase db, List<Lesson> lessons) {
+        if (lessons == null) {
+            return;
+        }
+        long now = System.currentTimeMillis();
+        for (Lesson lesson : lessons) {
+            if (lesson == null || lesson.name == null || lesson.name.isEmpty()
+                    || lesson.dayOfWeek <= 0 || lesson.beginSection <= 0) {
+                continue;
+            }
+            ContentValues values = new ContentValues();
+            values.put("id", lesson.id == null || lesson.id.isEmpty()
+                    ? lesson.stableId() : lesson.id);
+            values.put("name", lesson.name);
+            values.put("teacher", lesson.teacher);
+            values.put("location", lesson.location);
+            values.put("day_of_week", lesson.dayOfWeek);
+            values.put("begin_section", lesson.beginSection);
+            values.put("sections", lesson.sections <= 0 ? 1 : lesson.sections);
+            values.put("weeks", lesson.weeks);
+            values.put("updated_at", now);
+            db.replace("lessons", null, values);
+        }
+    }
+
+    private void writeScheduleMeta(long firstWeekDate, String sectionTimesJson) {
         SharedPreferences.Editor editor = schedulePrefs().edit();
         if (firstWeekDate > 0L) {
             editor.putLong(KEY_FIRST_WEEK_DATE, firstWeekDate);
@@ -940,6 +1001,18 @@ public final class DeadlineStore extends SQLiteOpenHelper {
         }
         editor.putLong(KEY_SCHEDULE_UPDATED_AT, System.currentTimeMillis());
         editor.apply();
+    }
+
+    /**
+     * Whether this teaching week was ever pulled from the host. Lets the schedule page
+     * tell "we never asked" apart from "this week genuinely has no classes".
+     */
+    public boolean hasFetchedWeek(int week) {
+        if (week <= 0) {
+            return false;
+        }
+        return schedulePrefs().getStringSet(KEY_FETCHED_WEEKS, Collections.emptySet())
+                .contains(String.valueOf(week));
     }
 
     public List<Lesson> allLessons() {

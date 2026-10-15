@@ -35,6 +35,8 @@ public final class DeadlineReceiver extends BroadcastReceiver {
     public static final String ACTION_COURSE_SCAN_PERF = "dev.chaoxingdeadline.COURSE_SCAN_PERF";
     public static final String ACTION_SETTINGS_UPDATE = "dev.chaoxingdeadline.SETTINGS_UPDATE";
     public static final String ACTION_WIDGET_REFRESH = "dev.chaoxingdeadline.WIDGET_REFRESH";
+    /** Timetable widget: flip its card to the next lesson (sent by the widget itself). */
+    public static final String ACTION_SCHEDULE_WIDGET_NEXT = "dev.chaoxingdeadline.SCHEDULE_WIDGET_NEXT";
     public static final String ACTION_DAILY_DIGEST = "dev.chaoxingdeadline.DAILY_DIGEST";
     public static final String ACTION_SNOOZE = "dev.chaoxingdeadline.SNOOZE";
     public static final String ACTION_SNOOZE_FIRE = "dev.chaoxingdeadline.SNOOZE_FIRE";
@@ -45,6 +47,7 @@ public final class DeadlineReceiver extends BroadcastReceiver {
      */
     public static final String ACTION_REQUEST_REFRESH = "dev.chaoxingdeadline.REQUEST_REFRESH";
     public static final String EXTRA_WEEK = "week";
+    public static final String EXTRA_APPWIDGET_ID = "appwidget_id";
     public static final String EXTRA_REASON = "reason";
     public static final String EXTRA_ITEM_B64 = "item_b64";
     public static final String EXTRA_STATUS = "status";
@@ -187,9 +190,12 @@ public final class DeadlineReceiver extends BroadcastReceiver {
                     for (int i = 0; i < array.length(); i++) {
                         lessons.add(Lesson.fromJson(array.getJSONObject(i)));
                     }
-                    new DeadlineStore(context).replaceLessons(lessons,
+                    // Merged, not replaced: each capture describes one teaching week, so
+                    // replacing would drop every other week already stored.
+                    new DeadlineStore(context).mergeLessons(lessons,
                             intent.getLongExtra("first_week_date", 0L),
-                            intent.getStringExtra("section_times"));
+                            intent.getStringExtra("section_times"),
+                            intent.getIntExtra(EXTRA_WEEK, 0));
                     DeadlineWidgetProvider.updateAll(context);
                     DeadlineScheduleWidget.updateAll(context);
                     context.sendBroadcast(new Intent(ACTION_REFRESH).setPackage(context.getPackageName()));
@@ -293,6 +299,11 @@ public final class DeadlineReceiver extends BroadcastReceiver {
         }
         if (ACTION_WIDGET_REFRESH.equals(intent.getAction())) {
             DeadlineWidgetProvider.updateAll(context);
+            DeadlineScheduleWidget.updateAll(context);
+            return;
+        }
+        if (ACTION_SCHEDULE_WIDGET_NEXT.equals(intent.getAction())) {
+            DeadlineScheduleWidget.advancePage(context, intent.getIntExtra(EXTRA_APPWIDGET_ID, -1));
             return;
         }
         if (!ACTION_ITEM.equals(intent.getAction())) {

@@ -3,6 +3,43 @@
 本项目的版本号遵循 `主版本.次版本.修订号`。所有版本均为 fork 版本（suiren0219），
 上游 `qingzhou704` 的原始功能记录见 README「致谢与署名」。以下按 新 → 旧 排列。
 
+## 1.13.0（versionCode 23）
+
+**修复：课表只保留当前周（拉一周清一周）**
+
+`replaceLessons()` 每次捕获都 `DELETE FROM lessons` 再写，而课表接口一次只答一周，
+于是拉第 5 周就把 1-4、6-16 周全清了——课表页看起来永远只有当前周。本版：
+
+- 新增 `DeadlineStore.mergeLessons()`：按 `lessonId` 合并（`db.replace` 就地更新，
+  同周重拉不产生重复行），不再清表；`firstWeekDate` 变化超过一天才判定为新学期并清库
+  （日期串与时间戳、时区造成的小时级偏差不算换学期）。
+- 记录**已拉取的周次**（`schedule_meta/fetched_weeks`），课表页据此区分两种情况：
+  没拉过 → 「第 N 周还没有数据」+ 获取按钮；拉过但为空 → 「第 N 周没有课」，
+  不再显示会误导的重试按钮。
+- 周次随捕获链路传递：宿主 `fetchTimetable(week)` 用 ThreadLocal 把请求的周次带到
+  `emitTimetable`，广播里带 `week=N`，模块按周记录；被动页面捕获没有周次，只合并不记账。
+- 新增 `ScheduleMath.weeksList()`（周次串展开，含区间上限 40 周防分配炸弹）。
+
+**改进：今日课程小组件改为卡片翻页**
+
+原来是「一屏多行、超出即截断」，改成 **ViewFlipper 一页一张课程卡**，点卡片翻到
+下一节课（右上角显示 `2/3`），显示课程色条、课名、时间段+节次、地点/教师，
+以及「上课中」「已结束」徽标。每张卡片保留各自页码，两个小组件实例互不干扰。
+
+技术选型说明：`StackView`/`ListView` 都继承自 `AdapterView`，而
+`AdapterView.addView()` 会抛 `UnsupportedOperationException`，无法用静态
+RemoteViews 填充（只能走 `RemoteViewsService`）。`ViewFlipper` 继承 `ViewAnimator`
+（`FrameLayout` 后代），`addView` 合法、`setDisplayedChild` 可远程调用，因此不需要
+新增 service 与 IPC，也不违背「部件内不滑动」的 HyperOS 约束——翻页靠点击。
+
+**内部**
+
+- 课程调色板从 `ScheduleActivity` 上移到 `UiTheme.courseColors()`，网格与小组件共用，
+  同一门课在两处颜色一致；`todayTint()` 同样上移。
+- 删除已被卡片取代的 `widget_schedule_row.xml`。
+
+**测试**：单测 **95 例全绿**（新增 `weeksList` 3、`mergeLessons` 4），lint 通过。
+
 ## 1.12.0（versionCode 22）
 
 **修复：课表捕获链路重做（1.11.6 遗留问题的根治）**

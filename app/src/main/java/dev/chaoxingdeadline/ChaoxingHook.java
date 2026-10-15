@@ -88,6 +88,8 @@ public final class ChaoxingHook extends XposedModule {
     private static final String COURSE_SCAN_PREFS = CourseScanScores.PREFS;
     private static final Object LIFECYCLE_LOCK = new Object();
     private static final ThreadLocal<Boolean> PARSING = ThreadLocal.withInitial(() -> false);
+    /** Teaching week an in-flight timetable request asked for; see fetchTimetable(int). */
+    private static final ThreadLocal<Integer> FETCH_WEEK = ThreadLocal.withInitial(() -> 0);
     private static final ArrayList<DeadlineItem> PENDING = new ArrayList<>();
     private static final Set<String> FETCHED_URLS = new HashSet<>();
     // Weekly timetable (课程表) captured from Chaoxing, kept in-process for the
@@ -1890,8 +1892,16 @@ public final class ChaoxingHook extends XposedModule {
             }
             body.append("week=").append(week);
         }
-        fetchUrl(TIMETABLE_URL, ParseContext.fromSource("active.timetable", TIMETABLE_URL),
-                body.toString());
+        // The fetch → inspect → collectTimetable → emitTimetable chain runs on this
+        // thread, so a ThreadLocal carries the requested week to the broadcast. Passive
+        // page captures never set it, which is right: their week is unknown.
+        FETCH_WEEK.set(week);
+        try {
+            fetchUrl(TIMETABLE_URL, ParseContext.fromSource("active.timetable", TIMETABLE_URL),
+                    body.toString());
+        } finally {
+            FETCH_WEEK.remove();
+        }
     }
 
     /** Remembers the curriculumUuid seen on any timetable URL (schedule.html, data calls). */
@@ -2013,6 +2023,12 @@ public final class ChaoxingHook extends XposedModule {
             intent.putExtra("lessons", array.toString());
             intent.putExtra("first_week_date", firstWeek);
             intent.putExtra("section_times", times == null ? "" : times);
+            int week = FETCH_WEEK.get() == null ? 0 : FETCH_WEEK.get();
+            if (week > 0) {
+                // The module merges this capture into the weeks it already has, so it
+                // must know which week this payload describes (see mergeLessons).
+                intent.putExtra(DeadlineReceiver.EXTRA_WEEK, week);
+            }
             attachBridgeToken(intent);
             context.sendBroadcast(intent);
         } catch (Throwable throwable) {

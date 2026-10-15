@@ -6,6 +6,7 @@ import java.util.ArrayList;
 import java.util.Calendar;
 import java.util.Collections;
 import java.util.Comparator;
+import java.util.LinkedHashSet;
 import java.util.List;
 import java.util.Locale;
 
@@ -22,6 +23,8 @@ public final class ScheduleMath {
     private static final int DEFAULT_SECTION_MINUTES = 45;
     private static final int DEFAULT_BREAK_MINUTES = 10;
     private static final int DEFAULT_FIRST_START = 8 * 60;
+    /** Upper bound for a single "a-b" range in a weeks string. */
+    private static final int MAX_WEEKS_PER_RANGE = 40;
 
     private ScheduleMath() {
     }
@@ -74,6 +77,42 @@ public final class ScheduleMath {
             }
         }
         return false;
+    }
+
+    /**
+     * Enumerates every week listed by a weeks string: {@code "3"} → [3],
+     * {@code "1-8,10"} → [1…8, 10]. Empty or unparsable input yields an empty list
+     * (which callers read as "every week", matching {@link #isActiveInWeek}).
+     * Ranges are capped so a typo like {@code "1-9999"} cannot allocate wildly.
+     */
+    public static List<Integer> weeksList(String weeks) {
+        if (weeks == null || weeks.trim().isEmpty()) {
+            return Collections.emptyList();
+        }
+        LinkedHashSet<Integer> result = new LinkedHashSet<>();
+        for (String token : weeks.split("[,;，；]")) {
+            String cleaned = digitsAndDash(token);
+            if (cleaned.isEmpty()) {
+                continue;
+            }
+            int dash = cleaned.indexOf('-');
+            if (dash < 0) {
+                int single = parseIntOrZero(cleaned);
+                if (single > 0) {
+                    result.add(single);
+                }
+                continue;
+            }
+            int from = parseIntOrZero(cleaned.substring(0, dash));
+            int to = parseIntOrZero(cleaned.substring(dash + 1));
+            if (from <= 0 || to < from) {
+                continue;
+            }
+            for (int week = from; week <= Math.min(to, from + MAX_WEEKS_PER_RANGE - 1); week++) {
+                result.add(week);
+            }
+        }
+        return new ArrayList<>(result);
     }
 
     /** Section start as minutes since midnight; falls back to the default table. */

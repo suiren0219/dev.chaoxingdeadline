@@ -302,8 +302,92 @@ public class DeadlineStoreTest {
     }
 
     @Test
-    public void dropsMalformedLessons() {
-        List<Lesson> lessons = Arrays.asList(
+    public void mergeLessonsAccumulatesWeeks() {
+        // Week 1 capture: a Monday lesson that runs all semester.
+        store.mergeLessons(Collections.singletonList(
+                new Lesson("L1", "高等数学", "张三", "教一101", 1, 1, 2, "1-16")),
+                1_800_000_000_000L, "", 1);
+        assertEquals(1, store.allLessons().size());
+        assertTrue("week 1 is recorded as fetched", store.hasFetchedWeek(1));
+        assertFalse("a week never pulled is not claimed", store.hasFetchedWeek(2));
+
+        // Week 2 capture: a different, week-2-only lesson. The week 1 row must survive —
+        // replacing the table here was the bug that made the timetable look current-week-only.
+        store.mergeLessons(Collections.singletonList(
+                new Lesson("L2", "专题讲座", "王五", "报告厅", 2, 3, 2, "2")),
+                1_800_000_000_000L, "", 2);
+        List<Lesson> merged = store.allLessons();
+        assertEquals(2, merged.size());
+        assertTrue(containsLessonId(merged, "L1"));
+        assertTrue(containsLessonId(merged, "L2"));
+        assertTrue(store.hasFetchedWeek(2));
+
+        // Re-pulling week 1 with an updated room updates in place instead of duplicating.
+        store.mergeLessons(Collections.singletonList(
+                new Lesson("L1", "高等数学", "张三", "教一205", 1, 1, 2, "1-16")),
+                1_800_000_000_000L, "", 1);
+        assertEquals("re-capturing a week must not duplicate its rows", 2, store.allLessons().size());
+        assertEquals("教一205", lessonById(store.allLessons(), "L1").location);
+    }
+
+    @Test
+    public void mergeLessonsResetsOnASemesterChange() {
+        store.mergeLessons(Collections.singletonList(
+                new Lesson("OLD", "旧学期课", "", "", 1, 1, 2, "1-16")),
+                1_800_000_000_000L, "", 1);
+        assertTrue(store.hasFetchedWeek(1));
+
+        // A firstWeekDate months away means a new semester: every stored row is stale.
+        long nextSemester = 1_800_000_000_000L + 120L * 24L * 60L * 60L * 1000L;
+        store.mergeLessons(Collections.singletonList(
+                new Lesson("NEW", "新学期课", "", "", 3, 2, 2, "1-16")),
+                nextSemester, "", 1);
+        List<Lesson> lessons = store.allLessons();
+        assertEquals(1, lessons.size());
+        assertEquals("NEW", lessons.get(0).id);
+        assertEquals(nextSemester, store.scheduleFirstWeekDate());
+        assertTrue("the new semester restarts the fetched-week record", store.hasFetchedWeek(1));
+    }
+
+    @Test
+    public void mergeLessonsToleratesJitterInFirstWeekDate() {
+        store.mergeLessons(Collections.singletonList(
+                new Lesson("L1", "高数", "", "", 1, 1, 2, "1-16")),
+                1_800_000_000_000L, "", 0);
+        // Same semester, but the payload spells the date a few hours off (timezone or
+        // date-vs-timestamp formatting): that must not be read as a new semester.
+        store.mergeLessons(Collections.singletonList(
+                new Lesson("L2", "英语", "", "", 3, 3, 2, "1-16")),
+                1_800_000_000_000L + 8L * 60L * 60L * 1000L, "", 0);
+        assertEquals("jitter keeps both rows", 2, store.allLessons().size());
+    }
+
+    @Test
+    public void mergeLessonsWithoutWeekKeepsRowsButRecordsNothing() {
+        // A passive page capture carries no week; it still merges its lessons in.
+        store.mergeLessons(Collections.singletonList(
+                new Lesson("L1", "高数", "", "", 1, 1, 2, "1-16")),
+                1_800_000_000_000L, "", 0);
+        assertEquals(1, store.allLessons().size());
+        assertFalse("no week given means no week recorded", store.hasFetchedWeek(0));
+        assertFalse(store.hasFetchedWeek(1));
+    }
+
+    private static boolean containsLessonId(List<Lesson> lessons, String id) {
+        return lessonById(lessons, id) != null;
+    }
+
+    private static Lesson lessonById(List<Lesson> lessons, String id) {
+        for (Lesson lesson : lessons) {
+            if (id.equals(lesson.id)) {
+                return lesson;
+            }
+        }
+        return null;
+    }
+
+    @Test
+    public void dropsMalformedLessons() {        List<Lesson> lessons = Arrays.asList(
                 new Lesson("L1", "", "老师", "教室", 1, 1, 2, "1-16"),   // no name
                 new Lesson("L2", "课", "老师", "教室", 0, 1, 2, "1-16"), // no weekday
                 new Lesson("L3", "课", "老师", "教室", 1, 0, 2, "1-16"), // no section
