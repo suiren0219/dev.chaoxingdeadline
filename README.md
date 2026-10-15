@@ -39,9 +39,13 @@ java -jar <android-sdk>/build-tools/36.0.0/lib/apksigner.jar verify --print-cert
 
 | SHA-256 前缀 | 含义 | 怎么办 |
 | --- | --- | --- |
-| `be89aa11…` | 本仓库 release 签名 | 与 `Deadline-*-release.apk` 同签名，可直接覆盖；若仍报错请核对包名 |
-| `47e8918b…` | 本机 debug 签名 | 改装 `Deadline-*-debug.apk`，可直接覆盖，数据保留 |
+| `90ae73d9…` | GitHub Actions 构建（CI 发布的 `Deadline-debug.apk` 与 `Deadline-release.apk` 都是这个） | 与从 Release 下载的包同签名，可直接覆盖 |
+| `be89aa11…` | 本仓库 release 签名（本机 `./gradlew assembleRelease` 且带 keystore.properties 时） | 与本地构建的 release 包同签名，可直接覆盖 |
+| `47e8918b…` | 本机 debug 签名（本机 `./gradlew assembleDebug`） | 与本地构建的 debug 包同签名，可直接覆盖 |
 | 其它 | 原作者官方包或其它机器打的 debug 包 | 无法覆盖，只能卸载重装（见下方数据迁移） |
+
+> CI 发布包统一为 `90ae73d9…`：仓库的正式签名 Secret 尚未配置，两个变体都回退用 runner 的调试密钥签名。
+> 所以从 GitHub 下载的包只会属于 `90ae73d9…` 这一行；另外两种签名只出现在自己电脑上构建的产物里。
 
 原作者官方包的私钥不在本仓库，因此**没有**办法把新包签成官方签名。
 
