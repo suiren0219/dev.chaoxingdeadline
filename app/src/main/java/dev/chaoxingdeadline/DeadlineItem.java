@@ -215,22 +215,17 @@ public final class DeadlineItem {
     }
 
     /**
-     * Whether this item still needs the user's attention.
+     * Whether this item is still outstanding.
      *
-     * "Open" is deliberately the conservative reading: an item is finished only when the
-     * school's own fields say so, the user marked it done, or an authoritative scan stopped
-     * reporting it after its deadline had passed. A chapter point that a scan never covers
-     * (those are passive-only) must not count as finished just because nobody re-reported it,
-     * so {@link #lastSeenAt} has to be non-zero before the scan-based rule applies.
+     * Only completion closes an item: the school's own fields, or the user ticking it off.
+     * An overdue item is still outstanding — it is the one most worth seeing — so the
+     * deadline deliberately plays no part here.
      */
     public boolean isOpen(long now) {
         if (settledAt > 0L) {
             return false;
         }
-        if (submitted || submissionState == SUBMISSION_SUBMITTED) {
-            return false;
-        }
-        return dueAt <= 0L || dueAt > now;
+        return !submitted && submissionState != SUBMISSION_SUBMITTED;
     }
 
     /** Whether this item is done but recent enough to show in the 已完成 list. */

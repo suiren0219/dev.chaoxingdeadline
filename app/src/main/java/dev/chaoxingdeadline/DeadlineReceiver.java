@@ -28,7 +28,6 @@ public final class DeadlineReceiver extends BroadcastReceiver {
     public static final String ACTION_DELETE = "dev.chaoxingdeadline.DELETE";
     public static final String ACTION_MARK_DONE = "dev.chaoxingdeadline.MARK_DONE";
     public static final String ACTION_SCAN_ROUND = "dev.chaoxingdeadline.SCAN_ROUND";
-    public static final String ACTION_TIMETABLE = "dev.chaoxingdeadline.TIMETABLE";
     public static final String ACTION_COURSE = "dev.chaoxingdeadline.COURSE";
     public static final String ACTION_COURSE_SCAN_RESULT = "dev.chaoxingdeadline.COURSE_SCAN_RESULT";
     public static final String ACTION_COURSE_SCAN_BATCH = "dev.chaoxingdeadline.COURSE_SCAN_BATCH";
@@ -36,12 +35,10 @@ public final class DeadlineReceiver extends BroadcastReceiver {
     public static final String ACTION_SETTINGS_UPDATE = "dev.chaoxingdeadline.SETTINGS_UPDATE";
     public static final String ACTION_WIDGET_REFRESH = "dev.chaoxingdeadline.WIDGET_REFRESH";
     /** Merged widget: switch between its timetable and deadline faces. */
-    public static final String ACTION_SCHEDULE_WIDGET_FACE = "dev.chaoxingdeadline.SCHEDULE_WIDGET_FACE";
     /** Merged widget's empty state: pull the timetable from the host. */
     public static final String ACTION_WIDGET_FETCH_TIMETABLE = "dev.chaoxingdeadline.WIDGET_FETCH_TIMETABLE";
     public static final String ACTION_DAILY_DIGEST = "dev.chaoxingdeadline.DAILY_DIGEST";
     /** Fires ahead of the next class to post the 上课提醒 notification. */
-    public static final String ACTION_CLASS_REMINDER = "dev.chaoxingdeadline.CLASS_REMINDER";
     public static final String ACTION_SNOOZE = "dev.chaoxingdeadline.SNOOZE";
     public static final String ACTION_SNOOZE_FIRE = "dev.chaoxingdeadline.SNOOZE_FIRE";
     /**
@@ -126,7 +123,6 @@ public final class DeadlineReceiver extends BroadcastReceiver {
         }
         try {
             DeadlineNotifier.rescheduleAll(context);
-            OverlayBridge.publish(context);
             DeadlineWidgetProvider.updateAll(context);
             context.sendBroadcast(new Intent(ACTION_REFRESH).setPackage(context.getPackageName()));
         } catch (Throwable throwable) {
@@ -174,7 +170,6 @@ public final class DeadlineReceiver extends BroadcastReceiver {
         }
         if (ACTION_IGNORE.equals(shadeAction)) {
             DeadlineNotifier.ignoreItem(context, intent.getStringExtra(DeadlineNotifier.EXTRA_DEADLINE_ID));
-            OverlayBridge.publish(context);
             DeadlineWidgetProvider.updateAll(context);
             return;
         }
@@ -187,38 +182,6 @@ public final class DeadlineReceiver extends BroadcastReceiver {
             DeadlineNotifier.sendDailyDigest(context);
             return;
         }
-        if (ACTION_CLASS_REMINDER.equals(intent.getAction())) {
-            // Post the reminder for this class, then re-arm for the following one: one
-            // alarm at a time keeps the chain alive without holding a whole day's queue.
-            DeadlineNotifier.updateClassReminder(context);
-            DeadlineNotifier.scheduleClassReminder(context);
-            return;
-        }
-        if (ACTION_TIMETABLE.equals(intent.getAction())) {
-            String lessonsJson = intent.getStringExtra("lessons");
-            if (lessonsJson != null && !lessonsJson.isEmpty()) {
-                try {
-                    JSONArray array = new JSONArray(lessonsJson);
-                    ArrayList<Lesson> lessons = new ArrayList<>(array.length());
-                    for (int i = 0; i < array.length(); i++) {
-                        lessons.add(Lesson.fromJson(array.getJSONObject(i)));
-                    }
-                    // Merged, not replaced: each capture describes one teaching week, so
-                    // replacing would drop every other week already stored.
-                    new DeadlineStore(context).mergeLessons(lessons,
-                            intent.getLongExtra("first_week_date", 0L),
-                            intent.getStringExtra("section_times"),
-                            intent.getIntExtra(EXTRA_WEEK, 0),
-                            intent.getIntExtra(EXTRA_MAX_WEEK, 0));
-                    DeadlineWidgetProvider.updateAll(context);
-                    DeadlineScheduleWidget.updateAll(context);
-                    context.sendBroadcast(new Intent(ACTION_REFRESH).setPackage(context.getPackageName()));
-                } catch (Throwable throwable) {
-                    Log.e(TAG, "timetable receive failed", throwable);
-                }
-            }
-            return;
-        }
         if (ACTION_SCAN_ROUND.equals(intent.getAction())) {
             DeadlineStore store = new DeadlineStore(context);
             int flagged = store.applyScanRound(
@@ -229,7 +192,6 @@ public final class DeadlineReceiver extends BroadcastReceiver {
                 DeadlineNotifier.cancelVanishedNotifications(context);
                 DeadlineNotifier.rescheduleAll(context);
             }
-            OverlayBridge.publish(context);
             DeadlineWidgetProvider.updateAll(context);
             context.sendBroadcast(new Intent(ACTION_REFRESH).setPackage(context.getPackageName()));
             return;
@@ -247,7 +209,6 @@ public final class DeadlineReceiver extends BroadcastReceiver {
         }
         if (ACTION_CHECK.equals(intent.getAction())) {
             DeadlineNotifier.checkAll(context);
-            OverlayBridge.publish(context);
             DeadlineWidgetProvider.updateAll(context);
             return;
         }
@@ -255,7 +216,6 @@ public final class DeadlineReceiver extends BroadcastReceiver {
             DeadlineNotifier.notifyDue(context,
                     intent.getStringExtra(DeadlineNotifier.EXTRA_DEADLINE_ID),
                     intent.getLongExtra(DeadlineNotifier.EXTRA_OFFSET_MILLIS, DeadlineNotifier.NO_OFFSET));
-            OverlayBridge.publish(context);
             DeadlineWidgetProvider.updateAll(context);
             return;
         }
@@ -273,7 +233,6 @@ public final class DeadlineReceiver extends BroadcastReceiver {
                     intent.getStringExtra("uid"),
                     intent.getStringExtra("course"),
                     intent.getStringExtra("raw"));
-            OverlayBridge.publish(context);
             DeadlineWidgetProvider.updateAll(context);
             context.sendBroadcast(new Intent(ACTION_REFRESH).setPackage(context.getPackageName()));
             return;
@@ -306,7 +265,6 @@ public final class DeadlineReceiver extends BroadcastReceiver {
             // Generic pass-through: any extra whose key is a known setting is written by
             // type, so new toggles do not need another branch here.
             AppSettings.applyRemoteUpdate(context, intent);
-            OverlayBridge.publish(context);
             DeadlineWidgetProvider.updateAll(context);
             context.sendBroadcast(new Intent(ACTION_REFRESH).setPackage(context.getPackageName()));
             return;
@@ -315,13 +273,9 @@ public final class DeadlineReceiver extends BroadcastReceiver {
             DeadlineWidgetProvider.updateAll(context);
             return;
         }
-        if (ACTION_SCHEDULE_WIDGET_FACE.equals(intent.getAction())) {
-            DeadlineScheduleWidget.toggleFace(context, intent.getIntExtra(EXTRA_APPWIDGET_ID, -1));
-            return;
-        }
         if (ACTION_WIDGET_FETCH_TIMETABLE.equals(intent.getAction())) {
-            // Asked for from the widget's empty state; the host does the actual pulling.
-            RefreshBridge.requestWholeSemester(context);
+            // Asked for from the widget's empty state; the host does the pulling.
+            RefreshBridge.requestFull(context);
             return;
         }
         if (!ACTION_ITEM.equals(intent.getAction())) {

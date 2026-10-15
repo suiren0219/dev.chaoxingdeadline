@@ -1,7 +1,7 @@
 <?xml version="1.0" encoding="utf-8"?>
-<!-- 合并小组件：一个面板，课表与待办两面，点标题旁的 ⇄ 切换。
+<!-- 待办小组件：一屏列出未完成的作业与章节任务点。
 
-     **默认按 4x2 声明**——这是用户实际摆放的尺寸，也是「一次看几节课」最小的可用版面。
+     **默认按 4x2 声明**——这是用户实际摆放的尺寸，也是「一次看几条待办」最小的可用版面。
      targetCellHeight 必须和 minHeight 自洽：声明 4 格却只给 2 格的高度，部分桌面会按
      minHeight 渲染成矮条，看起来就像「4x2 没做」。这里 2 格 ≈ 120dp，4 列 ≈ 250dp。
      同时开横向与纵向缩放：拉高会显示更多行（行数由 DeadlineScheduleWidget.rowsForHeight
@@ -13,7 +13,6 @@
     android:minResizeHeight="110dp"
     android:minResizeWidth="180dp"
     android:minWidth="250dp"
-    android:previewLayout="@layout/widget_schedule_preview"
     android:resizeMode="horizontal|vertical"
     android:targetCellHeight="2"
     android:targetCellWidth="4"

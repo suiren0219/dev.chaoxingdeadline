@@ -64,10 +64,6 @@ public final class AppSettings {
         return prefs(context).getBoolean("notify_homework", true);
     }
 
-    public static boolean notifyExam(Context context) {
-        return prefs(context).getBoolean("notify_exam", true);
-    }
-
     /** Chapter task points are opt-in: they can be numerous and noisy when enabled. */
     public static boolean notifyChapter(Context context) {
         return prefs(context).getBoolean("notify_chapter", false);
@@ -301,20 +297,6 @@ public final class AppSettings {
         DeadlineNotifier.scheduleNextDigest(context);
     }
 
-    /**
-     * Whether the hook polls the in-session course's classroom-activity list during the
-     * first minutes of class (sign-ins happen there). On by default: one extra request
-     * per two minutes, only while a class is actually in session.
-     */
-    public static boolean classSessionBoostEnabled(Context context) {
-        return prefs(context).getBoolean("class_session_boost", true);
-    }
-
-    public static void setClassSessionBoostEnabled(Context context, boolean enabled) {
-        prefs(context).edit().putBoolean("class_session_boost", enabled).apply();
-        syncRemotePreferences(context);
-    }
-
     // -- widget configuration --
 
     public static boolean widgetShowCourse(Context context) {
@@ -366,25 +348,6 @@ public final class AppSettings {
         widgetPrefs(context).edit().putBoolean("schedule_show_teacher", value).apply();
     }
 
-    /**
-     * Minutes before a lesson starts to post the "going to class" reminder; 0 disables it.
-     * Choices mirror the reference app's, and the value is what the alarm is scheduled at.
-     */
-    public static int classReminderMinutes(Context context) {
-        int value = prefs(context).getInt("class_reminder_minutes", DEFAULT_CLASS_REMINDER_MINUTES);
-        return isClassReminderOption(value) ? value : DEFAULT_CLASS_REMINDER_MINUTES;
-    }
-
-    public static void setClassReminderMinutes(Context context, int minutes) {
-        int value = isClassReminderOption(minutes) ? minutes : DEFAULT_CLASS_REMINDER_MINUTES;
-        prefs(context).edit().putInt("class_reminder_minutes", value).apply();
-        syncRemotePreferences(context);
-    }
-
-    public static boolean classReminderEnabled(Context context) {
-        return classReminderMinutes(context) > 0;
-    }
-
     /** 0 = off; otherwise the minutes of lead time. */
     public static final int[] CLASS_REMINDER_OPTIONS = {0, 5, 10, 15, 20, 30, 45, 60};
     public static final int DEFAULT_CLASS_REMINDER_MINUTES = 15;
@@ -396,33 +359,6 @@ public final class AppSettings {
             }
         }
         return false;
-    }
-
-    /**
-     * Field-name aliases for the timetable parser, as "\u540d\u79f0=mc; \u661f\u671f=xq" groups.
-     *
-     * Some campus portals name their timetable fields in a vocabulary no heuristic can guess
-     * (see TimetableParser's class comment). Rather than guess harder and risk misreading
-     * unrelated payloads, the mapping is explicit and the user supplies it: the settings UI
-     * writes this string and the hooked process reads it, which is what makes an unknown
-     * school work without a new build.
-     */
-    public static String timetableAliases(Context context) {
-        return prefs(context).getString("timetable_aliases", "");
-    }
-
-    public static void setTimetableAliases(Context context, String spec) {
-        prefs(context).edit().putString("timetable_aliases",
-                spec == null ? "" : spec.trim()).apply();
-        syncRemotePreferences(context);
-    }
-
-    public static String classReminderLabel(Context context) {
-        int minutes = classReminderMinutes(context);
-        if (minutes <= 0) {
-            return "已关闭";
-        }
-        return "上课前 " + minutes + " 分钟";
     }
 
     // -- misc --
@@ -606,16 +542,8 @@ public final class AppSettings {
         if ("\u4f5c\u4e1a".equals(type)) {
             return notifyHomework(context);
         }
-        if ("\u8003\u8bd5".equals(type)) {
-            return notifyExam(context);
-        }
         if ("\u7ae0\u8282".equals(type)) {
             return notifyChapter(context);
-        }
-        if ("\u8bfe\u5802\u6d3b\u52a8".equals(type)) {
-            // Classroom-activity reminders were removed; the type is still captured
-            // and listed, it just never schedules a notification.
-            return false;
         }
         return false;
     }

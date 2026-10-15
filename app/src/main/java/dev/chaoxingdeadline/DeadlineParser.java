@@ -174,7 +174,8 @@ public final class DeadlineParser {
             String plain = stripTags(li);
             int submissionState = htmlSubmissionState(plain);
             long dueAt = parseDueFromText(plain, context);
-            if (dueAt <= System.currentTimeMillis()) {
+            // Overdue rows are kept (see readItem); only finished ones are skipped.
+            if (submissionState == DeadlineItem.SUBMISSION_SUBMITTED) {
                 continue;
             }
             String title = firstMatch(li, "(?is)<p[^>]*>(.*?)</p>");
@@ -214,7 +215,10 @@ public final class DeadlineParser {
             if (!item.taskId.isEmpty() || !item.courseId.isEmpty()) {
                 item.id = item.stableId();
             }
-            if (!item.title.isEmpty()) {
+            // A deadline is what makes this a task. Overdue ones are kept — that check used
+            // to be "dueAt <= now" and discarded them, which is why assigned work went
+            // missing — but a notice with no date at all is not a task to show.
+            if (dueAt > 0L && !item.title.isEmpty()) {
                 out.add(item);
             }
         }
@@ -449,7 +453,11 @@ public final class DeadlineParser {
             return null;
         }
         int submissionState = submissionState(object);
-        if (dueAt <= now) {
+        // Overdue work is kept. The school's list still carries it, the user still owes it,
+        // and dropping it here is exactly why previously-assigned homework never showed up.
+        // The only thing filtered is work the payload itself marks submitted — finished
+        // work is the single category the user asked to hide.
+        if (submissionState == DeadlineItem.SUBMISSION_SUBMITTED) {
             return null;
         }
         String type = inferType(object, path, source);

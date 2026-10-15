@@ -130,24 +130,14 @@ public class DeadlineStoreTest {
                 3, store.activeItems().size());
     }
 
-    @Test
-    public void migrationRetypesTaskListRowsAsClassroomActivity() {
-        DeadlineItem stale = item("作业", "第三讲签到", dueIn(24), "act-1", "7", "9");
-        stale.source = "active.taskList";
-        store.upsert(stale);
-        store.retypeActivityRows(store.getWritableDatabase());
-        List<DeadlineItem> items = store.activeItems();
-        assertEquals(1, items.size());
-        assertEquals("课堂活动", items.get(0).type);
-    }
 
     @Test
     public void ignoreRuleMatchesAcrossTypeChange() {
         store.upsert(item("作业", "第三讲签到", dueIn(24), "act-1", "7", "9"));
         String id = store.activeItems().get(0).id;
         store.deleteItem(id);
-        // Same task re-captured under the new type after the 1.9.0 re-typing.
-        store.upsert(item("课堂活动", "第三讲签到", dueIn(24), "act-1", "7", "9"));
+        // The same task re-captured under another tracked type must stay ignored.
+        store.upsert(item("章节", "第三讲签到", dueIn(24), "act-1", "7", "9"));
         assertEquals("an ignored task must stay ignored across the type change",
                 0, store.activeItems().size());
     }
@@ -157,28 +147,31 @@ public class DeadlineStoreTest {
         store.upsert(item("作业", "第三讲签到", dueIn(24), "act-1", "7", "9"));
         store.deleteItem(store.activeItems().get(0).id);
         // Same id namespace, different task: the title cross-check must keep it.
-        store.upsert(item("课堂活动", "第三周投票", dueIn(24), "act-1", "7", "9"));
+        store.upsert(item("章节", "第三周投票", dueIn(24), "act-1", "7", "9"));
         assertEquals(1, store.activeItems().size());
     }
 
     @Test
-    public void prunesRowsExpiredBeyondRetention() {
+    public void keepsOverdueWorkButReclaimsFinishedRows() {
         store.upsert(item("作业", "上古作业",
                 System.currentTimeMillis() - TimeUnit.DAYS.toMillis(100), "w-1", "7", "9"));
-        assertFalse("100 days past due is reclaimed on insert",
+        assertTrue("overdue work is never reclaimed — it is still owed",
                 containsTitle(store.activeItems(), "上古作业"));
 
         store.upsert(item("作业", "刚截止的作业",
                 System.currentTimeMillis() - TimeUnit.DAYS.toMillis(30), "w-2", "7", "9"));
-        assertTrue("recently expired rows stay visible",
+        assertTrue("recently overdue rows stay visible",
                 containsTitle(store.activeItems(), "刚截止的作业"));
+
+        // Only finished work eventually goes away, and only after the retention window.
+        DeadlineItem done = item("作业", "很久以前做完的",
+                System.currentTimeMillis() - TimeUnit.DAYS.toMillis(100), "w-3", "7", "9");
+        done.setSubmissionState(DeadlineItem.SUBMISSION_SUBMITTED);
+        store.upsert(done);
+        assertFalse("a long-finished row is reclaimed",
+                containsTitle(store.activeItems(), "很久以前做完的"));
     }
 
-    @Test
-    public void tracksClassroomActivities() {
-        assertTrue(DeadlineStore.isSupportedType("课堂活动"));
-        assertEquals(4, DeadlineStore.managedTypes().length);
-    }
 
     @Test
     public void flagsItemMissingFromTwoAuthoritativeScans() {
@@ -251,215 +244,21 @@ public class DeadlineStoreTest {
         }
     }
 
-    @Test
-    public void backupRoundTripsSettings() throws Exception {
-        AppSettings.prefs(context).edit().putInt("notify_hours", 72).apply();
-        JSONObject backup = DeadlineBackup.exportJson(context);
-        JSONObject settings = backup.getJSONObject("settings");
-        assertTrue(settings.has(AppSettings.PREFS));
-        assertTrue(settings.has(AppSettings.WIDGET_PREFS));
-        assertTrue(settings.has(DeadlineStore.PREFS));
-        assertFalse("the bridge token file must never be exported",
-                settings.has(BridgeAuth.PREFS_NAME));
-
-        AppSettings.prefs(context).edit().putInt("notify_hours", 6).apply();
-        int restored = DeadlineBackup.importJson(context, backup.toString(), false, true);
-        assertEquals("items restored (none here); settings ride along", 0, restored);
-        assertEquals(72, AppSettings.notifyHours(context));
-    }
-
-    @Test
-    public void importWithoutSettingsLeavesThemAlone() throws Exception {
-        AppSettings.prefs(context).edit().putInt("notify_hours", 72).apply();
-        JSONObject backup = DeadlineBackup.exportJson(context);
-        AppSettings.prefs(context).edit().putInt("notify_hours", 6).apply();
-        DeadlineBackup.importJson(context, backup.toString(), false, false);
-        assertEquals("opt-out keeps current settings", 6, AppSettings.notifyHours(context));
-    }
-
-    @Test
-    public void lessonsRoundTripThroughTheStore() {
-        List<Lesson> lessons = Arrays.asList(
-                new Lesson("L1", "高等数学", "张三", "教一101", 1, 1, 2, "1-16"),
-                new Lesson("L2", "大学英语", "李四", "教二202", 3, 3, 2, "1-8,10-16"));
-        store.replaceLessons(lessons, 1_800_000_000_000L, "[\"8:00-8:45\",\"8:55-9:40\"]");
-        List<Lesson> stored = store.allLessons();
-        assertEquals(2, stored.size());
-        assertEquals("sorted by day then section", 1, stored.get(0).dayOfWeek);
-        assertEquals("L2", stored.get(1).id);
-        assertEquals("教二202", stored.get(1).location);
-        assertEquals(1_800_000_000_000L, store.scheduleFirstWeekDate());
-        assertTrue(store.scheduleSectionTimes().contains("8:00-8:45"));
-        assertTrue(store.scheduleUpdatedAt() > 0L);
-
-        // A fresh capture replaces the whole table.
-        store.replaceLessons(Collections.singletonList(
-                new Lesson("L3", "体育", "", "", 5, 6, 2, "1-16")), 0L, "");
-        assertEquals(1, store.allLessons().size());
-        assertEquals("L3", store.allLessons().get(0).id);
-        assertEquals("firstWeekDate kept when the payload has none",
-                1_800_000_000_000L, store.scheduleFirstWeekDate());
-    }
-
-    @Test
-    public void mergeLessonsAccumulatesWeeks() {
-        // Week 1 capture: a Monday lesson that runs all semester.
-        store.mergeLessons(Collections.singletonList(
-                new Lesson("L1", "高等数学", "张三", "教一101", 1, 1, 2, "1-16")),
-                1_800_000_000_000L, "", 1, 0);
-        assertEquals(1, store.allLessons().size());
-        assertTrue("week 1 is recorded as fetched", store.hasFetchedWeek(1));
-        assertFalse("a week never pulled is not claimed", store.hasFetchedWeek(2));
-
-        // Week 2 capture: a different, week-2-only lesson. The week 1 row must survive —
-        // replacing the table here was the bug that made the timetable look current-week-only.
-        store.mergeLessons(Collections.singletonList(
-                new Lesson("L2", "专题讲座", "王五", "报告厅", 2, 3, 2, "2")),
-                1_800_000_000_000L, "", 2, 0);
-        List<Lesson> merged = store.allLessons();
-        assertEquals(2, merged.size());
-        assertTrue(containsLessonId(merged, "L1"));
-        assertTrue(containsLessonId(merged, "L2"));
-        assertTrue(store.hasFetchedWeek(2));
-
-        // Re-pulling week 1 with an updated room updates in place instead of duplicating.
-        store.mergeLessons(Collections.singletonList(
-                new Lesson("L1", "高等数学", "张三", "教一205", 1, 1, 2, "1-16")),
-                1_800_000_000_000L, "", 1, 0);
-        assertEquals("re-capturing a week must not duplicate its rows", 2, store.allLessons().size());
-        assertEquals("教一205", lessonById(store.allLessons(), "L1").location);
-    }
-
-    @Test
-    public void mergeLessonsResetsOnASemesterChange() {
-        store.mergeLessons(Collections.singletonList(
-                new Lesson("OLD", "旧学期课", "", "", 1, 1, 2, "1-16")),
-                1_800_000_000_000L, "", 1, 0);
-        assertTrue(store.hasFetchedWeek(1));
-
-        // A firstWeekDate months away means a new semester: every stored row is stale.
-        long nextSemester = 1_800_000_000_000L + 120L * 24L * 60L * 60L * 1000L;
-        store.mergeLessons(Collections.singletonList(
-                new Lesson("NEW", "新学期课", "", "", 3, 2, 2, "1-16")),
-                nextSemester, "", 1, 0);
-        List<Lesson> lessons = store.allLessons();
-        assertEquals(1, lessons.size());
-        assertEquals("NEW", lessons.get(0).id);
-        assertEquals(nextSemester, store.scheduleFirstWeekDate());
-        assertTrue("the new semester restarts the fetched-week record", store.hasFetchedWeek(1));
-    }
-
-    @Test
-    public void mergeLessonsToleratesJitterInFirstWeekDate() {
-        store.mergeLessons(Collections.singletonList(
-                new Lesson("L1", "高数", "", "", 1, 1, 2, "1-16")),
-                1_800_000_000_000L, "", 0, 0);
-        // Same semester, but the payload spells the date a few hours off (timezone or
-        // date-vs-timestamp formatting): that must not be read as a new semester.
-        store.mergeLessons(Collections.singletonList(
-                new Lesson("L2", "英语", "", "", 3, 3, 2, "1-16")),
-                1_800_000_000_000L + 8L * 60L * 60L * 1000L, "", 0, 0);
-        assertEquals("jitter keeps both rows", 2, store.allLessons().size());
-    }
-
-    @Test
-    public void mergeLessonsWithoutWeekKeepsRowsButRecordsNothing() {
-        // A passive page capture carries no week; it still merges its lessons in.
-        store.mergeLessons(Collections.singletonList(
-                new Lesson("L1", "高数", "", "", 1, 1, 2, "1-16")),
-                1_800_000_000_000L, "", 0, 0);
-        assertEquals(1, store.allLessons().size());
-        assertFalse("no week given means no week recorded", store.hasFetchedWeek(0));
-        assertFalse(store.hasFetchedWeek(1));
-    }
 
 
-    @Test
-    public void mergeLessonsSurvivesAShiftingServerLessonId() {
-        // Verified against the live endpoint: the same class comes back with a different
-        // lessonConfigId depending on which week you ask for. Merging by id therefore
-        // stored one duplicate per week swept; the slot (name+weekday+section) is stable.
-        store.mergeLessons(Collections.singletonList(
-                new Lesson("155704694967468032", "体育", "王老师", "体育馆", 1, 3, 2, "1")),
-                1_800_000_000_000L, "", 1, 0);
-        store.mergeLessons(Collections.singletonList(
-                new Lesson("155704693660942336", "体育", "王老师", "体育馆", 1, 3, 2, "2")),
-                1_800_000_000_000L, "", 2, 0);
-        List<Lesson> lessons = store.allLessons();
-        assertEquals("one row despite two different server ids", 1, lessons.size());
-        assertEquals("1-2", lessons.get(0).weeks);
-    }
 
-    @Test
-    public void mergeLessonsUnionsWeekListsIntoSemesterRanges() {
-        // Each week arrives stamped with just that week; sweeping 1..5 must rebuild "1-5".
-        for (int week = 1; week <= 5; week++) {
-            store.mergeLessons(Collections.singletonList(
-                    new Lesson("id-" + week, "示例课程", "李老师", "教三301", 2, 1, 2,
-                            String.valueOf(week))),
-                    1_800_000_000_000L, "", week, 0);
-        }
-        List<Lesson> lessons = store.allLessons();
-        assertEquals(1, lessons.size());
-        assertEquals("1-5", lessons.get(0).weeks);
-    }
 
-    @Test
-    public void mergeLessonsKeepsSeparateSlotsForTheSameCourse() {
-        // Two lessons of one course in different slots (seen in real timetables) stay apart.
-        store.mergeLessons(Arrays.asList(
-                new Lesson("a", "大学英语Ⅲ", "张老师", "教二202", 3, 3, 2, "1-16"),
-                new Lesson("b", "大学英语Ⅲ", "张老师", "教二202", 2, 5, 2, "1-16")),
-                1_800_000_000_000L, "", 1, 0);
-        assertEquals(2, store.allLessons().size());
-    }
 
-    @Test
-    public void mergeLessonsRecordsSemesterLength() {
-        store.mergeLessons(Collections.singletonList(
-                new Lesson("L1", "高数", "", "", 1, 1, 2, "1")),
-                1_800_000_000_000L, "", 1, 25);
-        assertEquals(25, store.scheduleMaxWeek());
-    }
 
-    @Test
-    public void mergeLessonsTreatsEmptyWeeksAsEveryWeek() {
-        // An empty weeks string means "every week" everywhere else in the app; a merge
-        // must not narrow it, or the lesson would vanish from weeks it actually runs in.
-        store.mergeLessons(Collections.singletonList(
-                new Lesson("L1", "示例课程", "", "", 4, 7, 2, "")),
-                1_800_000_000_000L, "", 1, 0);
-        store.mergeLessons(Collections.singletonList(
-                new Lesson("L1", "示例课程", "", "", 4, 7, 2, "7")),
-                1_800_000_000_000L, "", 7, 0);
-        assertEquals("", store.allLessons().get(0).weeks);
-        assertTrue("still active in every week",
-                ScheduleMath.isActiveInWeek(store.allLessons().get(0), 12));
-    }
 
-    private static boolean containsLessonId(List<Lesson> lessons, String id) {
-        return lessonById(lessons, id) != null;
-    }
 
-    private static Lesson lessonById(List<Lesson> lessons, String id) {
-        for (Lesson lesson : lessons) {
-            if (id.equals(lesson.id)) {
-                return lesson;
-            }
-        }
-        return null;
-    }
 
-    @Test
-    public void dropsMalformedLessons() {        List<Lesson> lessons = Arrays.asList(
-                new Lesson("L1", "", "老师", "教室", 1, 1, 2, "1-16"),   // no name
-                new Lesson("L2", "课", "老师", "教室", 0, 1, 2, "1-16"), // no weekday
-                new Lesson("L3", "课", "老师", "教室", 1, 0, 2, "1-16"), // no section
-                new Lesson("L4", "正常课", "老师", "教室", 2, 5, 2, "1-16"));
-        store.replaceLessons(lessons, 0L, "");
-        assertEquals(1, store.allLessons().size());
-        assertEquals("L4", store.allLessons().get(0).id);
-    }
+
+
+
+
+
+
 
     /** Writes a row the way an older build would have: straight into the table. */
     private void insertRaw(DeadlineItem item) {

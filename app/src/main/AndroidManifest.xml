@@ -45,21 +45,6 @@
         <activity
             android:name=".AboutActivity"
             android:exported="false" />
-        <activity
-            android:name=".BackupActivity"
-            android:exported="false" />
-        <activity
-            android:name=".StatsActivity"
-            android:exported="false" />
-        <activity
-            android:name=".ScheduleActivity"
-            android:exported="false" />
-        <activity
-            android:name=".MonthCalendarActivity"
-            android:exported="false" />
-        <activity
-            android:name=".CourseDetailActivity"
-            android:exported="false" />
         <!-- Exported intentionally: the launcher starts this as the AppWidget configure
              activity. It only reads the widget id and writes module-local preferences. -->
         <activity
@@ -71,16 +56,6 @@
                 <action android:name="android.appwidget.action.APPWIDGET_CONFIGURE" />
             </intent-filter>
         </activity>
-        <service
-            android:name=".DeadlineTileService"
-            android:exported="true"
-            android:icon="@drawable/ic_notification"
-            android:label="@string/tile_label"
-            android:permission="android.permission.BIND_QUICK_SETTINGS_TILE">
-            <intent-filter>
-                <action android:name="android.service.quicksettings.action.QS_TILE" />
-            </intent-filter>
-        </service>
         <!-- Exported intentionally: the hook runs inside Chaoxing's process and sends explicit
              broadcasts back to this module. DeadlineReceiver validates every non-system action
              with BridgeAuth before accepting data. -->
@@ -106,7 +81,7 @@
                 android:name="android.appwidget.provider"
                 android:resource="@xml/widget_compact_info" />
         </receiver>
-        <!-- 合并 widget: 课表与待办两面，点 ⇄ 切换。 -->
+        <!-- 待办 widget: 一屏列出未完成的作业与章节。 -->
         <receiver
             android:name=".DeadlineScheduleWidget"
             android:exported="false"

@@ -87,18 +87,8 @@ public final class SettingsActivity extends BaseActivity {
         group2.addView(switchRow("作业提醒", "作业到达设定的提醒时间提醒", AppSettings.notifyHomework(this),
                 (b, c) -> { AppSettings.prefs(this).edit().putBoolean("notify_homework", c).apply(); DeadlineNotifier.rescheduleUpcomingOnly(this); }));
         group2.addView(divider());
-        group2.addView(switchRow("考试提醒", "考试到达设定的提醒时间提醒", AppSettings.notifyExam(this),
-                (b, c) -> { AppSettings.prefs(this).edit().putBoolean("notify_exam", c).apply(); DeadlineNotifier.rescheduleUpcomingOnly(this); }));
-        group2.addView(divider());
         group2.addView(switchRow("章节任务提醒", "章节任务点的截止时间提醒，可能产生较多通知", AppSettings.notifyChapter(this),
                 (b, c) -> { AppSettings.prefs(this).edit().putBoolean("notify_chapter", c).apply(); DeadlineNotifier.rescheduleUpcomingOnly(this); }));
-        group2.addView(divider());
-        group2.addView(classReminderRow());
-        group2.addView(divider());
-        group2.addView(switchRow("上课期间加强检测",
-                "上课前 15 分钟对当期课程的课堂活动每 2 分钟刷新一次，签到投票不错过",
-                AppSettings.classSessionBoostEnabled(this),
-                (b, c) -> AppSettings.setClassSessionBoostEnabled(this, c)));
         group2.addView(divider());
         group2.addView(switchRow("截止时提醒", "到达截止时间的那一刻再提醒一次", AppSettings.notifyAtDue(this),
                 (b, c) -> { AppSettings.prefs(this).edit().putBoolean("notify_at_due", c).apply(); DeadlineNotifier.rescheduleUpcomingOnly(this); }));
@@ -185,29 +175,9 @@ public final class SettingsActivity extends BaseActivity {
         // -- 管理 --
         content.addView(sectionHeader("管理"));
         LinearLayout manageGroup = card();
-        View course = innerActionRow("课程管理", "手动选择哪些课程的作业、考试和章节任务需要显示");
+        View course = innerActionRow("课程管理", "手动选择哪些课程的作业和章节任务需要显示");
         course.setOnClickListener(v -> startActivity(new Intent(this, CourseBlockActivity.class)));
         manageGroup.addView(course);
-        manageGroup.addView(divider());
-        View backup = innerActionRow("备份与导出", "导出 JSON 备份或 ICS 日历，也可从备份恢复");
-        backup.setOnClickListener(v -> startActivity(new Intent(this, BackupActivity.class)));
-        manageGroup.addView(backup);
-        manageGroup.addView(divider());
-        View schedule = innerActionRow("课表", "周网格课表：今天高亮、周次切换、手动刷新；首页也有今日课表卡片");
-        schedule.setOnClickListener(v -> startActivity(new Intent(this, ScheduleActivity.class)));
-        manageGroup.addView(schedule);
-        manageGroup.addView(divider());
-        View holidays = innerActionRow("调休日历",
-                HolidayCalendar.summary(this));
-        holidays.setOnClickListener(v -> startActivity(new Intent(this, MonthCalendarActivity.class)));
-        manageGroup.addView(divider());
-        manageGroup.addView(holidays);
-        View aliases = innerActionRow("课表字段映射",
-                AppSettings.timetableAliases(this).isEmpty()
-                        ? "自动识别；若你的学校课表拉不到，在此填写字段名"
-                        : "已自定义：" + AppSettings.timetableAliases(this));
-        aliases.setOnClickListener(v -> showAliasDialog());
-        manageGroup.addView(aliases);
         manageGroup.addView(divider());
         manageGroup.addView(switchRow("自动移除已撤销待办",
                 "连续两次完整刷新都没出现的待办直接删除；关闭则只在列表里标记「可能已撤销」、暂停提醒",
@@ -215,10 +185,6 @@ public final class SettingsActivity extends BaseActivity {
                 (b, c) -> AppSettings.setAutoRemoveVanished(this, c)));
         manageGroup.addView(divider());
         manageGroup.addView(repairDuplicatesRow());
-        manageGroup.addView(divider());
-        View stats = innerActionRow("统计概览", "未完成、已过期、未来 7 天分布与课程分布");
-        stats.setOnClickListener(v -> startActivity(new Intent(this, StatsActivity.class)));
-        manageGroup.addView(stats);
         content.addView(manageGroup, groupParams());
 
         // -- 关于 --
@@ -235,76 +201,6 @@ public final class SettingsActivity extends BaseActivity {
         content.addView(about, groupParams());
 
         return root;
-    }
-
-    /** "N minutes before class" picker; 0 = off. */
-    private View classReminderRow() {
-        View row = innerActionRow("上课提醒", AppSettings.classReminderLabel(this)
-                + (AppSettings.classReminderEnabled(this) ? "提醒" : ""));
-        row.setOnClickListener(v -> {
-            int[] values = AppSettings.CLASS_REMINDER_OPTIONS;
-            String[] labels = new String[values.length];
-            int checked = 0;
-            int current = AppSettings.classReminderMinutes(this);
-            for (int i = 0; i < values.length; i++) {
-                labels[i] = values[i] == 0 ? "关闭" : "上课前 " + values[i] + " 分钟";
-                if (values[i] == current) {
-                    checked = i;
-                }
-            }
-            new AlertDialog.Builder(this)
-                    .setTitle("上课提醒")
-                    .setSingleChoiceItems(labels, checked, (dialog, which) -> {
-                        AppSettings.setClassReminderMinutes(this, values[which]);
-                        DeadlineNotifier.scheduleClassReminder(this);
-                        DeadlineNotifier.updateClassReminder(this);
-                        dialog.dismiss();
-                        recreate();
-                    })
-                    .setNegativeButton("取消", null)
-                    .show();
-        });
-        return row;
-    }
-
-    /**
-     * Editor for the timetable field-name aliases.
-     *
-     * Offered because a school whose portal names its fields in an unfamiliar vocabulary is
-     * otherwise unsupported, and no heuristic can guess a name like "mc" from first
-     * principles. The dialog states the format and where to find the names (the hook logs
-     * every unrecognised payload's URL and keys), so the user can supply the mapping from
-     * evidence instead of a guess.
-     */
-    private void showAliasDialog() {
-        EditText input = new EditText(this);
-        input.setText(AppSettings.timetableAliases(this));
-        input.setHint("名称=mc; 星期=xq; 节次=jc; 周次=zs; 教师=js; 地点=dd");
-        input.setSingleLine(false);
-        input.setMinLines(3);
-        int pad = dp(20);
-        FrameLayout wrapper = new FrameLayout(this);
-        wrapper.setPadding(pad, dp(8), pad, 0);
-        wrapper.addView(input, new FrameLayout.LayoutParams(-1, -2));
-        new AlertDialog.Builder(this)
-                .setTitle("课表字段映射")
-                .setMessage("字段名写在等号右边，逗号分隔；组之间用分号。"
-                        + "留空则恢复自动识别。\n\n"
-                        + "正常情况不需要填：课表会先按字段名识别，"
-                        + "识别不了再按「星期几 + 第几节 + 课程名」的结构识别。"
-                        + "\n\n若仍拉不到课表，在 LSPosed 日志里搜\"unparsed timetable\"，"
-                        + "日志会给出 URL 和字段名，照着填即可。")
-                .setView(wrapper)
-                .setPositiveButton("保存", (dialog, which) -> {
-                    AppSettings.setTimetableAliases(this, input.getText().toString());
-                    recreate();
-                })
-                .setNeutralButton("清空", (dialog, which) -> {
-                    AppSettings.setTimetableAliases(this, "");
-                    recreate();
-                })
-                .setNegativeButton("取消", null)
-                .show();
     }
 
     private String quietRangeLabel() {
@@ -478,7 +374,6 @@ public final class SettingsActivity extends BaseActivity {
         notifyHours.setText(String.valueOf(hours));
         AppSettings.prefs(this).edit().putInt("notify_hours", hours).apply();
         DeadlineNotifier.rescheduleUpcomingOnly(this);
-        OverlayBridge.publish(this);
         Toast.makeText(this, "操作成功", Toast.LENGTH_SHORT).show();
     }
 
@@ -538,7 +433,6 @@ public final class SettingsActivity extends BaseActivity {
                 .setTitle("弹窗范围")
                 .setSingleChoiceItems(labels, checked, (dialog, which) -> {
                     AppSettings.setOverlayWindowHours(this, values[which]);
-                    OverlayBridge.publish(this);
                     Toast.makeText(this, "操作成功", Toast.LENGTH_SHORT).show();
                     dialog.dismiss();
                     recreate();
@@ -629,7 +523,6 @@ public final class SettingsActivity extends BaseActivity {
             }
             if (removed > 0) {
                 DeadlineNotifier.rescheduleAll(this);
-                OverlayBridge.publish(this);
                 DeadlineWidgetProvider.updateAll(this);
                 DeadlineScheduleWidget.updateAll(this);
                 Toast.makeText(this, "已合并 " + removed + " 条重复记录", Toast.LENGTH_SHORT).show();

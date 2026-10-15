@@ -56,12 +56,14 @@ public class CompletionSettlementTest {
     }
 
     @Test
-    public void overdueItemIsSettledWithoutBeingSubmitted() {
+    public void overdueItemStaysVisible() {
         store.upsert(item("作业", "早就过期", dueIn(-TimeUnit.HOURS.toMillis(2))));
         store.settleFinished();
 
-        assertTrue("an item past its deadline leaves the open list", store.openItems().isEmpty());
-        assertEquals(1, store.recentlyFinished(0L).size());
+        // The whole point of collecting everything: overdue work is the work that most
+        // needs doing, so it must not be quietly retired.
+        assertEquals("overdue work stays in the list", 1, store.openItems().size());
+        assertTrue(store.recentlyFinished(0L).isEmpty());
     }
 
     @Test
@@ -99,37 +101,37 @@ public class CompletionSettlementTest {
     }
 
     @Test
-    public void vanishedAfterTwoAuthoritativeRoundsSettles() {
-        store.upsert(item("作业", "被撤销了", dueIn(48)));
+    public void vanishedItemIsFlaggedButStillListed() {
+        store.upsert(item("作业", "扫不到了", dueIn(48)));
         String courseKey = "7|9";
 
-        // Round one: not reported. One miss is not proof — a passive capture can arrive
-        // after the round snapshot.
         store.applyScanRound(new String[]{courseKey}, new String[]{});
-        assertEquals("one miss must not settle anything", 1, store.openItems().size());
+        store.applyScanRound(new String[]{courseKey}, new String[]{});
 
-        // Round two: still absent, so the item is judged gone.
-        store.applyScanRound(new String[]{courseKey}, new String[]{});
-        assertTrue("two authoritative misses settle the row", store.openItems().isEmpty());
-        assertEquals(1, store.recentlyFinished(0L).size());
+        // Absence from a scan is not proof the user finished anything: it may have been
+        // withdrawn, or the endpoint may simply have stopped listing it. It gets flagged
+        // and stays visible rather than disappearing on that guess.
+        List<DeadlineItem> open = store.openItems();
+        assertEquals("a vanished row stays in the list", 1, open.size());
+        assertTrue("and it is flagged so the user can judge", open.get(0).vanishedAt > 0L);
+        assertTrue(store.recentlyFinished(0L).isEmpty());
     }
 
     @Test
-    public void reappearingItemIsResurrected() {
+    public void reappearingItemLosesItsVanishedFlag() {
         store.upsert(item("作业", "又回来了", dueIn(48)));
         String id = store.openItems().get(0).id;
         String courseKey = "7|9";
 
         store.applyScanRound(new String[]{courseKey}, new String[]{});
         store.applyScanRound(new String[]{courseKey}, new String[]{});
-        assertTrue(store.openItems().isEmpty());
+        assertTrue(store.openItems().get(0).vanishedAt > 0L);
 
-        // The teacher re-opened it, or it was only temporarily missing: a later round
-        // reporting it again must clear the miss state.
+        // A later round reporting it again means the absence was transient.
         store.applyScanRound(new String[]{courseKey}, new String[]{id});
 
-        assertEquals("a re-reported item returns to the open list", 1, store.openItems().size());
-        assertTrue(store.recentlyFinished(0L).isEmpty());
+        assertEquals(1, store.openItems().size());
+        assertEquals("the flag clears when it is seen again", 0L, store.openItems().get(0).vanishedAt);
     }
 
     @Test
@@ -149,7 +151,9 @@ public class CompletionSettlementTest {
 
     @Test
     public void finishedWindowHidesOldEntries() {
-        store.upsert(item("作业", "上周做完的", dueIn(-TimeUnit.DAYS.toMillis(30))));
+        DeadlineItem old = item("作业", "上个月做完的", dueIn(-TimeUnit.DAYS.toMillis(30)));
+        old.setSubmissionState(DeadlineItem.SUBMISSION_SUBMITTED);
+        store.upsert(old);
         store.settleFinished();
 
         assertEquals("a month-old completion still counts as finished",
@@ -185,13 +189,15 @@ public class CompletionSettlementTest {
 
     @Test
     public void settlementIsIdempotent() {
-        store.upsert(item("作业", "过期了", dueIn(-TimeUnit.HOURS.toMillis(1))));
+        DeadlineItem done = item("作业", "交过了", dueIn(48));
+        done.setSubmissionState(DeadlineItem.SUBMISSION_SUBMITTED);
+        store.upsert(done);
         int first = store.settleFinished();
         int second = store.settleFinished();
 
-        assertEquals("the first pass settles the row", 1, first);
+        assertEquals("the first pass settles the submitted row", 1, first);
         assertEquals("a second pass finds nothing left to settle", 0, second);
-        assertEquals("and the window list does not duplicate it",
+        assertEquals("and the finished list does not duplicate it",
                 1, store.recentlyFinished(0L).size());
     }
 

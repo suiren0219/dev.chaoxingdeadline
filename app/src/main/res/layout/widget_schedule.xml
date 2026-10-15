@@ -54,22 +54,6 @@
                 android:visibility="gone" />
         </LinearLayout>
 
-        <!-- 切换面：课表 ⇄ 待办 -->
-        <TextView
-            android:id="@+id/s_switch"
-            android:layout_width="wrap_content"
-            android:layout_height="wrap_content"
-            android:layout_marginStart="8dp"
-            android:contentDescription="@string/widget_switch_face"
-            android:paddingStart="8dp"
-            android:paddingEnd="8dp"
-            android:paddingTop="2dp"
-            android:paddingBottom="2dp"
-            android:text="⇄"
-            android:textColor="#99FFFFFF"
-            android:textSize="15sp"
-            android:textStyle="bold" />
-
         <TextView
             android:id="@+id/s_refresh"
             android:layout_width="wrap_content"

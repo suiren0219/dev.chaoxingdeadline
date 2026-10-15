@@ -99,29 +99,15 @@ final class CourseScanner {
 
     private int fetchCourseDeadline(CourseRef ref, String cookieUid) {
         String refUid = ref.uid.isEmpty() ? cookieUid : ref.uid;
-        String uid = refUid.isEmpty() ? "" : "&uid=" + urlEncode(refUid);
         String cpi = ref.cpi.isEmpty() ? "" : "&cpi=" + urlEncode(ref.cpi);
         int failures = 0;
         int found = 0;
+        // Homework only. The exam and classroom-activity endpoints are gone with the types
+        // they fed: dropping them halves the request count per course, which is what the
+        // anti-spider guard is most sensitive to, and neither type is shown any more.
         int result = host.fetchUrl("https://mooc1-api.chaoxing.com/work/task-list?courseId="
                         + urlEncode(ref.courseId) + "&classId=" + urlEncode(ref.classId) + cpi,
                 parseContextForCourse("active.workList", ref, refUid));
-        if (result < 0) {
-            failures++;
-        } else {
-            found += result;
-        }
-        result = host.fetchUrl("https://mobilelearn.chaoxing.com/ppt/activeAPI/taskactivelist?courseId="
-                        + urlEncode(ref.courseId) + "&classId=" + urlEncode(ref.classId) + uid,
-                parseContextForCourse("active.taskList", ref, refUid));
-        if (result < 0) {
-            failures++;
-        } else {
-            found += result;
-        }
-        result = host.fetchUrl("https://mooc1-api.chaoxing.com/mooc-ans/exam/phone/task-list?courseId="
-                        + urlEncode(ref.courseId) + "&classId=" + urlEncode(ref.classId) + cpi,
-                parseContextForCourse("active.examList", ref, refUid));
         if (result < 0) {
             failures++;
         } else {

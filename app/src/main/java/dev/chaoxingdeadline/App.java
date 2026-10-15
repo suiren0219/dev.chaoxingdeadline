@@ -54,7 +54,6 @@ public final class App extends Application implements XposedServiceHelper.OnServ
         App.service = service;
         BridgeAuth.syncRemotePreferences(this);
         AppSettings.syncRemotePreferences(this);
-        OverlayBridge.publish(this);
         for (ServiceListener listener : listeners) {
             listener.onServiceChanged(service);
         }

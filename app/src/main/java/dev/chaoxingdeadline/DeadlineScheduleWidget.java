@@ -46,7 +46,6 @@ import java.util.Locale;
 public final class DeadlineScheduleWidget extends AppWidgetProvider {
     /** Per-widget UI state: which face is showing. */
     private static final String PREFS = "schedule_widget_state";
-    private static final String KEY_FACE = "face_";
     /** Absolute cap, so a tall panel cannot fill the home screen with timetable rows. */
     private static final int MAX_ROWS = 8;
     /** Height of one lesson row on a tall panel (34dp strip + padding + gap). */
@@ -75,11 +74,7 @@ public final class DeadlineScheduleWidget extends AppWidgetProvider {
     private static final int ROW_COMPACT_DP = 42;
     /** Rows assumed when the launcher reports no size: what a 4x2 panel fits. */
     static final int DEFAULT_ROWS = 2;
-    /** From this hour on, the timetable face previews tomorrow instead of today. */
-    static final int EVENING_HOUR = 21;
 
-    static final int FACE_TIMETABLE = 0;
-    static final int FACE_TODO = 1;
 
     @Override
     public void onUpdate(Context context, AppWidgetManager appWidgetManager, int[] appWidgetIds) {
@@ -91,11 +86,6 @@ public final class DeadlineScheduleWidget extends AppWidgetProvider {
         if (appWidgetIds == null) {
             return;
         }
-        SharedPreferences.Editor editor = statePrefs(context).edit();
-        for (int id : appWidgetIds) {
-            editor.remove(KEY_FACE + id);
-        }
-        editor.apply();
     }
 
     static void updateAll(Context context) {
@@ -113,25 +103,6 @@ public final class DeadlineScheduleWidget extends AppWidgetProvider {
         }
     }
 
-    /** Flips this widget to the other face. */
-    static void toggleFace(Context context, int appWidgetId) {
-        try {
-            SharedPreferences prefs = statePrefs(context);
-            int current = prefs.getInt(KEY_FACE + appWidgetId, FACE_TIMETABLE);
-            prefs.edit().putInt(KEY_FACE + appWidgetId,
-                    current == FACE_TIMETABLE ? FACE_TODO : FACE_TIMETABLE).apply();
-            updateAll(context);
-        } catch (Throwable ignored) {
-        }
-    }
-
-    /** The day the timetable face is showing: today, or tomorrow from the evening on. */
-    static boolean showingTomorrow(long now) {
-        Calendar calendar = Calendar.getInstance();
-        calendar.setTimeInMillis(now);
-        return calendar.get(Calendar.HOUR_OF_DAY) >= EVENING_HOUR;
-    }
-
     /**
      * Test hook: build one face through the real path, with the row budget forced.
      *
@@ -139,12 +110,7 @@ public final class DeadlineScheduleWidget extends AppWidgetProvider {
      * launcher's reported widget size, neither of which a unit test can control from
      * outside. This enters the same code with both pinned.
      */
-    static RemoteViews buildForTest(Context context, int appWidgetId, int face) {
-        return buildForTest(context, appWidgetId, face, -1);
-    }
-
-    static RemoteViews buildForTest(Context context, int appWidgetId, int face, int forcedRows) {
-        statePrefs(context).edit().putInt(KEY_FACE + appWidgetId, face).apply();
+    static RemoteViews buildForTest(Context context, int appWidgetId, int forcedRows) {
         return build(context, appWidgetId, forcedRows, 0);
     }
 
@@ -180,19 +146,13 @@ public final class DeadlineScheduleWidget extends AppWidgetProvider {
     private static RemoteViews build(Context context, int appWidgetId, int forcedRows,
                                      int heightDp) {
         RemoteViews views = new RemoteViews(context.getPackageName(), R.layout.widget_schedule);
-        SharedPreferences prefs = statePrefs(context);
-        boolean timetableFace = prefs.getInt(KEY_FACE + appWidgetId, FACE_TIMETABLE) == FACE_TIMETABLE;
         boolean compact = isCompact(heightDp);
 
         long now = System.currentTimeMillis();
-        DeadlineStore store = new DeadlineStore(context);
-        long firstWeekDate = store.scheduleFirstWeekDate();
-        String sectionTimes = store.scheduleSectionTimes();
         List<DeadlineItem> pending = DeadlineWidgetProvider.pendingItems(context);
 
         views.setTextColor(R.id.s_header, DeadlineWidgetProvider.primaryText(context, true));
         views.setTextColor(R.id.s_updated, DeadlineWidgetProvider.mutedText(context, true));
-        views.setTextColor(R.id.s_switch, DeadlineWidgetProvider.mutedText(context, true));
         views.setTextColor(R.id.s_refresh, DeadlineWidgetProvider.mutedText(context, true));
         views.setTextColor(R.id.s_note, DeadlineWidgetProvider.mutedText(context, true));
         views.setTextColor(R.id.s_empty_text, DeadlineWidgetProvider.mutedText(context, true));
@@ -207,123 +167,20 @@ public final class DeadlineScheduleWidget extends AppWidgetProvider {
 
         views.removeAllViews(R.id.s_rows);
         int rowBudget = forcedRows > 0 ? forcedRows : rowsForHeight(heightDp);
-        if (timetableFace) {
-            buildTimetableFace(context, views, store, now, firstWeekDate, sectionTimes,
-                    rowBudget, compact);
-            views.setViewVisibility(R.id.s_note, View.VISIBLE);
-        } else {
-            int count = pending.size();
-            views.setTextViewText(R.id.s_header, "Deadline 待办");
-            views.setTextViewText(R.id.s_updated, count > 0
-                    ? "共 " + count + " 项 · 更新于 " + DateText.deadlineTime(now)
-                    : "更新于 " + DateText.deadlineTime(now));
-            views.setViewVisibility(R.id.s_updated, View.GONE);
-            views.setViewVisibility(R.id.s_note, View.GONE);
-            buildTodoFace(context, views, pending, rowBudget);
-        }
+        int count = pending.size();
+        views.setTextViewText(R.id.s_header, "Deadline 待办");
+        views.setTextViewText(R.id.s_updated, count > 0
+                ? "共 " + count + " 项 · 更新于 " + DateText.deadlineTime(now)
+                : "更新于 " + DateText.deadlineTime(now));
+        views.setViewVisibility(R.id.s_updated, View.GONE);
+        views.setViewVisibility(R.id.s_note, View.GONE);
+        buildTodoFace(context, views, pending, rowBudget);
 
-        // The title is the way into the timetable page — the widget's rows are read-only.
+        // A tap on the title opens the app; the rows themselves are read-only.
         views.setOnClickPendingIntent(R.id.s_header, schedulePendingIntent(context));
-        views.setOnClickPendingIntent(R.id.s_switch, switchFacePendingIntent(context, appWidgetId));
         views.setOnClickPendingIntent(R.id.s_refresh,
                 DeadlineWidgetProvider.refreshPendingIntent(context));
         return views;
-    }
-
-    private static void buildTimetableFace(Context context, RemoteViews views, DeadlineStore store,
-                                           long now, long firstWeekDate, String sectionTimes,
-                                           int rowBudget, boolean compact) {
-        views.setViewVisibility(R.id.s_todo_empty, View.GONE);
-        boolean tomorrow = showingTomorrow(now);
-        // The evening preview belongs to the next calendar day, so both the lessons and
-        // their timestamps come from that day.
-        long dayStart = now + (tomorrow ? 24L * 60L * 60L * 1000L : 0L);
-        int week = ScheduleMath.currentWeek(dayStart, firstWeekDate);
-        List<Lesson> all = ScheduleMath.lessonsOn(store.allLessons(), dayStart, firstWeekDate);
-        Lesson current = tomorrow ? null
-                : ScheduleMath.currentLesson(all, now, firstWeekDate, sectionTimes);
-        // Lessons already over are dropped, not dimmed: the face answers "what is left
-        // today", and a finished morning only displaces the afternoon in a 4x2 strip.
-        List<Lesson> lessons = remaining(all, current, now, firstWeekDate, sectionTimes, tomorrow);
-
-        String weekday = new SimpleDateFormat("M月d日 EEEE", Locale.CHINA).format(new Date(dayStart));
-        String dayWord = tomorrow ? "明天" : "今天";
-        String header = week > 0
-                ? "第 " + week + " 周 · " + dayWord + " " + lessons.size() + " 节"
-                : "课表未获取";
-        views.setTextViewText(R.id.s_header, header);
-        // A 4x2 strip cannot afford a second header line; the date is what it drops.
-        views.setViewVisibility(R.id.s_updated, compact ? View.GONE : View.VISIBLE);
-        // A short panel cannot spare the usual gap above the rows.
-        views.setViewPadding(R.id.s_rows, 0, 0, 0, dp(context, compact ? 4 : 10));
-        views.setTextViewText(R.id.s_updated, weekday + " · 更新于 "
-                + DateText.deadlineTime(now));
-
-        if (lessons.isEmpty()) {
-            views.setViewVisibility(R.id.s_rows, View.GONE);
-            views.setViewVisibility(R.id.s_empty, View.VISIBLE);
-            boolean everFetched = store.scheduleUpdatedAt() > 0L;
-            views.setTextViewText(R.id.s_empty_text, everFetched
-                    ? (tomorrow ? "明天没有课" : (all.isEmpty() ? "今天没有课" : "今天的课已上完"))
-                    : "还没有课表数据\n打开学习通课表页面即可自动获取");
-            views.setViewVisibility(R.id.s_empty_action, everFetched ? View.GONE : View.VISIBLE);
-            views.setOnClickPendingIntent(R.id.s_empty_action,
-                    DeadlineWidgetProvider.fetchSemesterPendingIntent(context));
-            return;
-        }
-
-        views.setViewVisibility(R.id.s_empty, View.GONE);
-        views.setViewVisibility(R.id.s_rows, View.VISIBLE);
-        // While a class is in session it heads the list (the widget answers "what now?").
-        List<Lesson> ordered = new ArrayList<>(lessons);
-        if (current != null) {
-            for (int i = 0; i < ordered.size(); i++) {
-                if (sameLesson(current, ordered.get(i))) {
-                    ordered.add(0, ordered.remove(i));
-                    break;
-                }
-            }
-        }
-        int shown = Math.min(ordered.size(), rowBudget);
-        for (int i = 0; i < shown; i++) {
-            views.addView(R.id.s_rows, row(context, ordered.get(i), current, week,
-                    firstWeekDate, sectionTimes, now, tomorrow, i < shown - 1));
-        }
-    }
-
-    /**
-     * The lessons still to come (plus the one in progress), earliest first.
-     *
-     * Dropping finished lessons keeps a 4x2 panel useful all day: at 8pm the strip should
-     * show tomorrow's first class, not this morning's. The lesson in progress is kept even
-     * though its start is in the past, because "what am I in right now" is the question the
-     * widget exists to answer. Tomorrow's list is already entirely in the future.
-     */
-    static List<Lesson> remaining(List<Lesson> lessons, Lesson current, long now,
-                                  long firstWeekDate, String sectionTimes, boolean tomorrow) {
-        if (lessons == null || lessons.isEmpty() || tomorrow) {
-            return lessons == null ? new ArrayList<>() : lessons;
-        }
-        int week = ScheduleMath.currentWeek(now, firstWeekDate);
-        ArrayList<Lesson> result = new ArrayList<>();
-        for (Lesson lesson : lessons) {
-            if (current != null && sameLesson(current, lesson)) {
-                result.add(lesson);
-                continue;
-            }
-            long end = ScheduleMath.lessonEndAt(firstWeekDate, week, lesson.dayOfWeek,
-                    lesson.beginSection, lesson.sections, sectionTimes);
-            if (end <= 0L || now < end) {
-                result.add(lesson);
-            }
-        }
-        return result;
-    }
-
-    /** Identity by slot, because the server's lesson id is not stable across weeks. */
-    private static boolean sameLesson(Lesson first, Lesson second) {
-        return first != null && second != null
-                && Lesson.slotKey(first).equals(Lesson.slotKey(second));
     }
 
     private static void buildTodoFace(Context context, RemoteViews views,
@@ -370,75 +227,9 @@ public final class DeadlineScheduleWidget extends AppWidgetProvider {
         return heightDp > 0 && heightDp < COMPACT_HEIGHT_DP;
     }
 
-    private static RemoteViews row(Context context, Lesson lesson, Lesson current, int week,
-                                   long firstWeekDate, String sectionTimes, long now,
-                                   boolean tomorrow, boolean moreBelow) {
-        RemoteViews row = new RemoteViews(context.getPackageName(), R.layout.widget_schedule_card);
-        row.setViewVisibility(R.id.card_gap, moreBelow ? View.VISIBLE : View.GONE);
-        long start = ScheduleMath.lessonStartAt(firstWeekDate, week, lesson.dayOfWeek,
-                lesson.beginSection, sectionTimes);
-        long end = ScheduleMath.lessonEndAt(firstWeekDate, week, lesson.dayOfWeek,
-                lesson.beginSection, lesson.sections, sectionTimes);
-        boolean isCurrent = !tomorrow && sameLesson(current, lesson);
-
-        int[] colors = UiTheme.courseColors(context, lesson.name);
-        row.setInt(R.id.card_strip, "setBackgroundColor", colors[1]);
-
-        row.setTextViewText(R.id.card_time, (start > 0L ? DateText.clock(start) : "--:--")
-                + "\n" + (end > 0L ? DateText.clock(end) : "--:--"));
-        row.setTextColor(R.id.card_time, isCurrent
-                ? DeadlineWidgetProvider.accent(context)
-                : DeadlineWidgetProvider.mutedText(context, true));
-
-        row.setTextViewText(R.id.card_name, lesson.name == null || lesson.name.isEmpty()
-                ? "未命名课程" : lesson.name);
-        row.setTextColor(R.id.card_name, DeadlineWidgetProvider.primaryText(context, true));
-
-        row.setTextViewText(R.id.card_meta, placeLabel(context, lesson));
-        row.setTextColor(R.id.card_meta, DeadlineWidgetProvider.mutedText(context, true));
-
-        // The chip marks the lesson in progress; finished ones are not listed at all.
-        row.setViewVisibility(R.id.card_live, isCurrent ? View.VISIBLE : View.GONE);
-        if (isCurrent) {
-            row.setInt(R.id.card_live, "setBackgroundColor", DeadlineWidgetProvider.accent(context));
-            row.setTextColor(R.id.card_live, Color.WHITE);
-        }
-        row.setOnClickPendingIntent(R.id.card_root, schedulePendingIntent(context));
-        return row;
-    }
-
-    /** "room · teacher", "room", "teacher", or a placeholder — per the user's setting. */
-    private static String placeLabel(Context context, Lesson lesson) {
-        String place = lesson.location == null ? "" : lesson.location.trim();
-        String teacher = AppSettings.widgetScheduleShowTeacher(context)
-                ? (lesson.teacher == null ? "" : lesson.teacher.trim())
-                : "";
-        if (!place.isEmpty() && !teacher.isEmpty()) {
-            return place + " · " + teacher;
-        }
-        if (!place.isEmpty()) {
-            return place;
-        }
-        if (!teacher.isEmpty()) {
-            return teacher;
-        }
-        return "地点未填写";
-    }
-
-    private static PendingIntent switchFacePendingIntent(Context context, int appWidgetId) {
-        Intent intent = new Intent(context, DeadlineReceiver.class)
-                .setAction(DeadlineReceiver.ACTION_SCHEDULE_WIDGET_FACE)
-                .setPackage(context.getPackageName());
-        intent.putExtra(DeadlineReceiver.EXTRA_APPWIDGET_ID, appWidgetId);
-        BridgeAuth.attach(context, intent);
-        // One PendingIntent per widget: extras are part of the identity, so a shared
-        // request code would leak one instance's id into another.
-        return PendingIntent.getBroadcast(context, "schedule_face".hashCode() + appWidgetId,
-                intent, PendingIntent.FLAG_UPDATE_CURRENT | PendingIntent.FLAG_IMMUTABLE);
-    }
 
     private static PendingIntent schedulePendingIntent(Context context) {
-        Intent intent = new Intent(context, ScheduleActivity.class);
+        Intent intent = new Intent(context, MainActivity.class);
         intent.setFlags(Intent.FLAG_ACTIVITY_NEW_TASK | Intent.FLAG_ACTIVITY_CLEAR_TOP);
         return PendingIntent.getActivity(context, "schedule_open".hashCode(), intent,
                 PendingIntent.FLAG_UPDATE_CURRENT | PendingIntent.FLAG_IMMUTABLE);

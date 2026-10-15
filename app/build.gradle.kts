@@ -19,8 +19,8 @@ android {
         applicationId = "dev.chaoxingdeadline"
         minSdk = 26
         targetSdk = 36
-        versionCode = 34
-        versionName = "1.18.4"
+        versionCode = 35
+        versionName = "1.19.0"
     }
 
     signingConfigs {

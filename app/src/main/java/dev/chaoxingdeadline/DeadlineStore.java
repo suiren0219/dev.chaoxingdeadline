@@ -20,14 +20,6 @@ public final class DeadlineStore extends SQLiteOpenHelper {
     private static final String DB_NAME = "deadlines.db";
     private static final int DB_VERSION = 10;
     public static final String PREFS = "blocked_courses";
-    private static final String SCHEDULE_PREFS = "schedule_meta";
-    private static final String KEY_FIRST_WEEK_DATE = "first_week_date";
-    private static final String KEY_SECTION_TIMES = "section_times";
-    private static final String KEY_SCHEDULE_UPDATED_AT = "updated_at";
-    /** Teaching weeks already pulled from the host, as string set (see mergeLessons). */
-    private static final String KEY_FETCHED_WEEKS = "fetched_weeks";
-    /** Semester length stated by the curriculum payload (maxWeek). */
-    private static final String KEY_MAX_WEEK = "max_week";
     private static final String KEY_LEGACY_COURSES = "courses";
     private static final String KEY_BLOCKED_RULES = "rules";
     static final String TYPE_ALL = "\u5168\u90e8";
@@ -82,7 +74,6 @@ public final class DeadlineStore extends SQLiteOpenHelper {
         db.execSQL("CREATE INDEX idx_deadlines_task_ref ON deadlines(type, course_id, class_id, task_id)");
         createCourseTable(db);
         createIgnoredTable(db);
-        createLessonsTable(db);
     }
 
     @Override
@@ -124,10 +115,6 @@ public final class DeadlineStore extends SQLiteOpenHelper {
             addColumn(db, "deadlines", "misses", "INTEGER NOT NULL DEFAULT 0");
             addColumn(db, "deadlines", "vanished_at", "INTEGER NOT NULL DEFAULT 0");
         }
-        if (oldVersion < 8) {
-            // 1.11.0: weekly timetable (课程表) captured from Chaoxing.
-            createLessonsTable(db);
-        }
         if (oldVersion < 9) {
             // 1.11.1: sweep duplicate rows written by versions whose deletes could not
             // match across the legacy/real course-id spaces. Runs once, in the upgrade
@@ -148,19 +135,6 @@ public final class DeadlineStore extends SQLiteOpenHelper {
         }
     }
 
-    private void createLessonsTable(SQLiteDatabase db) {
-        db.execSQL("CREATE TABLE IF NOT EXISTS lessons ("
-                + "id TEXT PRIMARY KEY,"
-                + "name TEXT NOT NULL DEFAULT '',"
-                + "teacher TEXT,"
-                + "location TEXT,"
-                + "day_of_week INTEGER NOT NULL DEFAULT 0,"
-                + "begin_section INTEGER NOT NULL DEFAULT 0,"
-                + "sections INTEGER NOT NULL DEFAULT 1,"
-                + "weeks TEXT,"
-                + "updated_at INTEGER NOT NULL)");
-        db.execSQL("CREATE INDEX IF NOT EXISTS idx_lessons_day ON lessons(day_of_week, begin_section)");
-    }
 
     void retypeActivityRows(SQLiteDatabase db) {
         try {
@@ -239,6 +213,12 @@ public final class DeadlineStore extends SQLiteOpenHelper {
         if (item == null || item.dueAt <= 0 || item.title == null || item.title.isEmpty()) {
             return;
         }
+        if (!isSupportedType(item.type)) {
+            // Exams and classroom activities are no longer collected. Rows of those types
+            // can still arrive through a passive page capture; refusing them here keeps the
+            // table to the two types the module now shows.
+            return;
+        }
         resolveCourse(item);
         if (item.id == null || item.id.isEmpty()) {
             item.id = item.stableId();
@@ -313,15 +293,16 @@ public final class DeadlineStore extends SQLiteOpenHelper {
     }
 
     /**
-     * Housekeeping: drop rows whose deadline passed more than EXPIRED_RETENTION_MS ago.
-     * Without this the table kept every expired row (raw JSON included) forever whenever
-     * auto-delete was off; recent expired items still show in the list, only ancient
-     * history is reclaimed. due_at is indexed, so this is a cheap range delete.
+     * Housekeeping: drop finished rows whose deadline passed long ago.
+     *
+     * Scoped to submitted rows on purpose. Outstanding work is never reclaimed, however old
+     * its deadline is: an overdue task is still a task the user owes, and deleting it is
+     * indistinguishable from losing it.
      */
     private void pruneExpiredBeyondRetention(SQLiteDatabase db) {
         try {
             long cutoff = System.currentTimeMillis() - EXPIRED_RETENTION_MS;
-            db.delete("deadlines", "due_at < ?", new String[]{String.valueOf(cutoff)});
+            db.delete("deadlines", "submitted != 0 AND due_at < ?", new String[]{String.valueOf(cutoff)});
         } catch (Throwable ignored) {
         }
     }
@@ -769,20 +750,26 @@ public final class DeadlineStore extends SQLiteOpenHelper {
         return items;
     }
 
+    /**
+     * Everything the module shows: outstanding homework and chapter task points.
+     *
+     * The only thing filtered out is work that is actually finished. Overdue items stay —
+     * they are the ones most worth seeing — and so does anything a scan merely stopped
+     * re-reporting. Ordered by deadline so the most pressing is first.
+     */
     public List<DeadlineItem> activeItems() {
         ArrayList<DeadlineItem> items = new ArrayList<>();
         // No prune() here: this is a hot read path (5s UI poll, every widget refresh and
-        // broadcast) and must not carry write side effects. Expired rows are pruned on
-        // upsert and when auto-delete is switched on.
-        String where = AppSettings.autoDeleteExpired(context) ? "due_at > ?" : null;
-        String[] args = AppSettings.autoDeleteExpired(context)
-                ? new String[]{String.valueOf(System.currentTimeMillis())}
-                : null;
+        // broadcast) and must not carry write side effects.
         try (Cursor cursor = getReadableDatabase().query(
-                "deadlines", null, where, args, null, null, "due_at ASC")) {
+                "deadlines", null, null, null, null, null, "due_at ASC")) {
             while (cursor.moveToNext()) {
                 DeadlineItem item = DeadlineItem.fromCursor(cursor);
                 if (!isSupportedType(item.type)) {
+                    continue;
+                }
+                if (item.submitted || item.submissionState == DeadlineItem.SUBMISSION_SUBMITTED) {
+                    // Done: this is the one case that hides a row.
                     continue;
                 }
                 resolveCourse(item);
@@ -794,15 +781,14 @@ public final class DeadlineStore extends SQLiteOpenHelper {
         return items;
     }
 
-    /** Homework, exam, chapter task points and classroom activities are the types this module tracks. */
+    /** Homework and chapter task points are the two things this module tracks. */
     public static boolean isSupportedType(String type) {
-        return TYPE_HOMEWORK.equals(type) || TYPE_EXAM.equals(type) || TYPE_CHAPTER.equals(type)
-                || TYPE_ACTIVITY.equals(type);
+        return TYPE_HOMEWORK.equals(type) || TYPE_CHAPTER.equals(type);
     }
 
     /** Types offered in the per-course management screen, in display order. */
     public static String[] managedTypes() {
-        return new String[]{TYPE_HOMEWORK, TYPE_EXAM, TYPE_CHAPTER, TYPE_ACTIVITY};
+        return new String[]{TYPE_HOMEWORK, TYPE_CHAPTER};
     }
 
     /**
@@ -876,16 +862,13 @@ public final class DeadlineStore extends SQLiteOpenHelper {
                             flagged++;
                         }
                         if (autoRemove) {
-                            // The user explicitly asked for these to be removed, so the
-                            // delete wins over the history entry this would otherwise
-                            // become. With the default (off) the row stays, carries the
-                            // 可能已撤销 badge and settles into the finished list.
                             deleteIds.add(item.id);
                             continue;
                         }
-                        // Settling is what takes it out of the open list; the row keeps the
-                        // stamp so the history can still show what happened to it.
-                        item.settledAt = item.vanishedAt;
+                        // Only flagged, never settled: a task missing from two scans might
+                        // have been withdrawn, or the endpoint might simply have stopped
+                        // listing it. Neither is proof the user finished it, and dropping it
+                        // from the list on that guess is how work goes missing.
                     }
                     updates.add(item);
                 }
@@ -950,13 +933,13 @@ public final class DeadlineStore extends SQLiteOpenHelper {
     public static final long SETTLED_WINDOW_MS = 14L * 24L * 60L * 60L * 1000L;
 
     /**
-     * Stamps settlement on every row whose state can be decided from what is already stored.
+     * Stamps settlement on every row that is genuinely finished.
      *
-     * This is the module-side half of "已完成": the school's own fields say submitted, the
-     * user said done, the deadline slid past, or an authoritative scan stopped reporting it
-     * (see {@link #applyScanRound}, which is where the last case is detected). Kept as one
-     * pass over the table so the settle rules live in exactly one place; the hook never has
-     * to know about them.
+     * "Finished" means one thing only: the task is done. Either the school's own fields
+     * report it submitted, or the user ticked it off. Everything else stays visible,
+     * including work whose deadline has already passed — an overdue task is exactly the
+     * task the user still needs to see, and hiding it is how the list ends up looking
+     * incomplete.
      *
      * @return number of rows newly settled
      */
@@ -992,7 +975,7 @@ public final class DeadlineStore extends SQLiteOpenHelper {
         return ids.size();
     }
 
-    /** The time this item became finished, or 0 while it is still open. */
+    /** The time this item became finished, or 0 while it is still outstanding. */
     private static long settlementOf(DeadlineItem item, long now) {
         if (item == null) {
             return 0L;
@@ -1001,16 +984,9 @@ public final class DeadlineStore extends SQLiteOpenHelper {
             // The school reports it done; the capture time is the best stamp available.
             return item.lastSeenAt > 0L ? item.lastSeenAt : (item.dueAt > 0L ? item.dueAt : now);
         }
-        if (item.vanishedAt > 0L) {
-            return item.vanishedAt;
-        }
-        if (item.dueAt > 0L && item.dueAt <= now) {
-            // Past due and never reported as submitted: closed either way, and keeping it in
-            // the open list would only make the count lie.
-            return item.dueAt;
-        }
-        // Still open. Note the deliberate omission of the chapter type: chapter points are
-        // passive-only, so "not re-reported" carries no information about them.
+        // Deliberately no deadline-based rule here. An overdue task is still outstanding,
+        // and a chapter point that a scan stopped reporting is likewise not evidence of
+        // completion — its absence simply is not reported on.
         return 0L;
     }
 
@@ -1086,224 +1062,6 @@ public final class DeadlineStore extends SQLiteOpenHelper {
      */
     public List<DeadlineItem> allItems() {
         return queryItems(null, null, "course ASC, due_at ASC");
-    }
-
-    // -- weekly timetable (课程表) --
-
-    /** Replace the whole timetable with the latest capture. */
-    public void replaceLessons(List<Lesson> lessons, long firstWeekDate, String sectionTimesJson) {
-        SQLiteDatabase db = getWritableDatabase();
-        db.beginTransaction();
-        try {
-            db.delete("lessons", null, null);
-            writeLessonRows(db, lessons);
-            db.setTransactionSuccessful();
-        } finally {
-            db.endTransaction();
-        }
-        schedulePrefs().edit().remove(KEY_FETCHED_WEEKS).apply();
-        writeScheduleMeta(firstWeekDate, sectionTimesJson);
-    }
-
-    /**
-     * Merge one teaching week's capture into the stored timetable.
-     *
-     * The mobile endpoint answers a single week per request and stamps every lesson it
-     * returns with just that week, so replacing the table would leave only the last week
-     * pulled. Merging is keyed on the lesson's *slot* (course name + weekday + first
-     * section), not on the server's lesson id: verified against the live endpoint, the id
-     * changes between weeks for the same class, so an id-keyed merge duplicates every
-     * lesson once per week swept.
-     *
-     * Week lists are unioned, which is what reconstructs a real semester from per-week
-     * answers: a course running weeks 1-16 arrives as "1", "2", … "16" and accumulates
-     * into "1-16". An empty weeks string means "every week" (see ScheduleMath), and that
-     * reading wins over any narrower list so a merge can never hide a lesson.
-     *
-     * The table is cleared only when the curriculum itself changed — a firstWeekDate that
-     * moved by more than a day means a new semester, where every stored row is stale.
-     *
-     * @param week the teaching week this payload describes; {@code <= 0} when unknown
-     *             (a passive page capture), in which case rows are still merged in.
-     * @param maxWeek semester length as reported by the curriculum, 0 when absent.
-     */
-    public void mergeLessons(List<Lesson> lessons, long firstWeekDate, String sectionTimesJson,
-                             int week, int maxWeek) {
-        SharedPreferences prefs = schedulePrefs();
-        long storedFirstWeek = prefs.getLong(KEY_FIRST_WEEK_DATE, 0L);
-        // A day of slack absorbs date-vs-timestamp and timezone wobble in the payload;
-        // a real semester shift is always months away.
-        boolean curriculumChanged = firstWeekDate > 0L && storedFirstWeek > 0L
-                && Math.abs(firstWeekDate - storedFirstWeek) > 24L * 60L * 60L * 1000L;
-
-        Map<String, Lesson> storedBySlot = new HashMap<>();
-        for (Lesson stored : allLessons()) {
-            storedBySlot.put(Lesson.slotKey(stored), stored);
-        }
-
-        SQLiteDatabase db = getWritableDatabase();
-        db.beginTransaction();
-        try {
-            if (curriculumChanged) {
-                db.delete("lessons", null, null);
-                storedBySlot.clear();
-            }
-            if (lessons != null) {
-                long now = System.currentTimeMillis();
-                for (Lesson incoming : lessons) {
-                    if (incoming == null || incoming.name == null || incoming.name.isEmpty()
-                            || incoming.dayOfWeek <= 0 || incoming.beginSection <= 0) {
-                        continue;
-                    }
-                    String slot = Lesson.slotKey(incoming);
-                    Lesson stored = storedBySlot.get(slot);
-                    String id = stored != null && stored.id != null && !stored.id.isEmpty()
-                            ? stored.id
-                            : (incoming.id == null || incoming.id.isEmpty()
-                            ? incoming.stableId() : incoming.id);
-                    String weeks = stored == null ? incoming.weeks
-                            : ScheduleMath.weeksMerge(stored.weeks, incoming.weeks);
-                    writeLessonRow(db, id, incoming, weeks, now);
-                    // Later weeks in the same payload must see this row too.
-                    Lesson merged = new Lesson(id, incoming.name, incoming.teacher,
-                            incoming.location, incoming.dayOfWeek, incoming.beginSection,
-                            incoming.sections, weeks);
-                    storedBySlot.put(slot, merged);
-                }
-            }
-            db.setTransactionSuccessful();
-        } finally {
-            db.endTransaction();
-        }
-
-        SharedPreferences.Editor editor = prefs.edit();
-        if (curriculumChanged) {
-            editor.remove(KEY_FETCHED_WEEKS);
-        }
-        if (week > 0) {
-            HashSet<String> fetched = new HashSet<>(prefs.getStringSet(KEY_FETCHED_WEEKS,
-                    Collections.emptySet()));
-            fetched.add(String.valueOf(week));
-            editor.putStringSet(KEY_FETCHED_WEEKS, fetched);
-        }
-        if (maxWeek > 0) {
-            editor.putInt(KEY_MAX_WEEK, maxWeek);
-        }
-        editor.apply();
-        writeScheduleMeta(firstWeekDate, sectionTimesJson);
-    }
-
-    /** Semester length reported by the school, 0 when no payload has stated one. */
-    public int scheduleMaxWeek() {
-        return schedulePrefs().getInt(KEY_MAX_WEEK, 0);
-    }
-
-    private void writeLessonRows(SQLiteDatabase db, List<Lesson> lessons) {
-        if (lessons == null) {
-            return;
-        }
-        long now = System.currentTimeMillis();
-        for (Lesson lesson : lessons) {
-            if (lesson == null || lesson.name == null || lesson.name.isEmpty()
-                    || lesson.dayOfWeek <= 0 || lesson.beginSection <= 0) {
-                continue;
-            }
-            writeLessonRow(db, lesson.id == null || lesson.id.isEmpty()
-                    ? lesson.stableId() : lesson.id, lesson, lesson.weeks, now);
-        }
-    }
-
-    private void writeLessonRow(SQLiteDatabase db, String id, Lesson lesson, String weeks, long now) {
-        ContentValues values = new ContentValues();
-        values.put("id", id);
-        values.put("name", lesson.name);
-        values.put("teacher", lesson.teacher);
-        values.put("location", lesson.location);
-        values.put("day_of_week", lesson.dayOfWeek);
-        values.put("begin_section", lesson.beginSection);
-        values.put("sections", lesson.sections <= 0 ? 1 : lesson.sections);
-        values.put("weeks", weeks == null ? "" : weeks);
-        // The row's own real timestamps are derived from firstWeekDate + sections, so
-        // updated_at only drives cache invalidation and the "updated at" label.
-        values.put("updated_at", now);
-        db.replace("lessons", null, values);
-    }
-
-    private void writeScheduleMeta(long firstWeekDate, String sectionTimesJson) {
-        SharedPreferences.Editor editor = schedulePrefs().edit();
-        if (firstWeekDate > 0L) {
-            editor.putLong(KEY_FIRST_WEEK_DATE, firstWeekDate);
-        }
-        if (sectionTimesJson != null && !sectionTimesJson.isEmpty()) {
-            editor.putString(KEY_SECTION_TIMES, sectionTimesJson);
-        }
-        editor.putLong(KEY_SCHEDULE_UPDATED_AT, System.currentTimeMillis());
-        editor.apply();
-    }
-
-    /**
-     * Whether this teaching week was ever pulled from the host. Lets the schedule page
-     * tell "we never asked" apart from "this week genuinely has no classes".
-     */
-    public boolean hasFetchedWeek(int week) {
-        if (week <= 0) {
-            return false;
-        }
-        return schedulePrefs().getStringSet(KEY_FETCHED_WEEKS, Collections.emptySet())
-                .contains(String.valueOf(week));
-    }
-
-    public List<Lesson> allLessons() {
-        ArrayList<Lesson> lessons = new ArrayList<>();
-        try (Cursor cursor = getReadableDatabase().query("lessons", null, null, null, null, null,
-                "day_of_week ASC, begin_section ASC")) {
-            while (cursor.moveToNext()) {
-                Lesson lesson = new Lesson();
-                lesson.id = columnText(cursor, "id");
-                lesson.name = columnText(cursor, "name");
-                lesson.teacher = columnText(cursor, "teacher");
-                lesson.location = columnText(cursor, "location");
-                lesson.dayOfWeek = columnInt(cursor, "day_of_week", 0);
-                lesson.beginSection = columnInt(cursor, "begin_section", 0);
-                lesson.sections = columnInt(cursor, "sections", 1);
-                lesson.weeks = columnText(cursor, "weeks");
-                if (lesson.dayOfWeek > 0 && lesson.beginSection > 0 && !lesson.name.isEmpty()) {
-                    lessons.add(lesson);
-                }
-            }
-        } catch (Throwable ignored) {
-        }
-        return lessons;
-    }
-
-    private static String columnText(Cursor cursor, String column) {
-        int index = cursor.getColumnIndex(column);
-        if (index < 0 || cursor.isNull(index)) {
-            return "";
-        }
-        String value = cursor.getString(index);
-        return value == null ? "" : value;
-    }
-
-    private static int columnInt(Cursor cursor, String column, int fallback) {
-        int index = cursor.getColumnIndex(column);
-        return index < 0 ? fallback : cursor.getInt(index);
-    }
-
-    public long scheduleFirstWeekDate() {
-        return schedulePrefs().getLong(KEY_FIRST_WEEK_DATE, 0L);
-    }
-
-    public String scheduleSectionTimes() {
-        return schedulePrefs().getString(KEY_SECTION_TIMES, "");
-    }
-
-    public long scheduleUpdatedAt() {
-        return schedulePrefs().getLong(KEY_SCHEDULE_UPDATED_AT, 0L);
-    }
-
-    private SharedPreferences schedulePrefs() {
-        return context.getSharedPreferences(SCHEDULE_PREFS, Context.MODE_PRIVATE);
     }
 
     public int countAll() {

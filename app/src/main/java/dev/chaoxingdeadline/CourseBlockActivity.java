@@ -42,7 +42,6 @@ public final class CourseBlockActivity extends BaseActivity {
         View clear = actionRow("↻", "恢复所有课程查询", "恢复所有课程的作业、考试、章节任务和课堂活动扫描");
         clear.setOnClickListener(v -> {
             store.clearBlockedCourses();
-            OverlayBridge.publish(this);
             DeadlineNotifier.rescheduleUpcomingOnly(this);
             Toast.makeText(this, "操作成功", Toast.LENGTH_SHORT).show();
             reload();
@@ -96,7 +95,6 @@ public final class CourseBlockActivity extends BaseActivity {
         cb.setChecked(store.isCourseTypeEnabled(course, type));
         cb.setOnCheckedChangeListener((b, c) -> {
             store.setCourseTypeEnabled(course, type, c);
-            OverlayBridge.publish(this);
             DeadlineNotifier.rescheduleUpcomingOnly(this);
         });
         parent.addView(cb, new LinearLayout.LayoutParams(0, -2, 1f));
