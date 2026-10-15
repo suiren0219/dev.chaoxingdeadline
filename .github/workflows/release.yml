@@ -56,8 +56,18 @@ jobs:
       - name: Rename APKs
         run: |
           mkdir -p out
-          for f in app/build/outputs/apk/release/*.apk; do cp "$f" "out/Deadline-${GITHUB_REF_NAME}-release.apk"; done
-          for f in app/build/outputs/apk/debug/*.apk; do cp "$f" "out/Deadline-${GITHUB_REF_NAME}-debug.apk"; done
+          # Each variant ships twice: once with the version in the name (for archives)
+          # and once under a fixed name. The fixed names keep
+          # https://github.com/<owner>/<repo>/releases/latest/download/<name>
+          # pointing at the newest build forever, so the download URL never changes.
+          for f in app/build/outputs/apk/release/*.apk; do
+            cp "$f" "out/Deadline-${GITHUB_REF_NAME}-release.apk"
+            cp "$f" "out/Deadline-release.apk"
+          done
+          for f in app/build/outputs/apk/debug/*.apk; do
+            cp "$f" "out/Deadline-${GITHUB_REF_NAME}-debug.apk"
+            cp "$f" "out/Deadline-debug.apk"
+          done
           ls -l out
 
       - name: Publish release

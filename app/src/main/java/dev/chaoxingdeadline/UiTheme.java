@@ -3,7 +3,9 @@ package dev.chaoxingdeadline;
 import android.content.Context;
 import android.content.res.Configuration;
 import android.graphics.Color;
+import android.graphics.drawable.Drawable;
 import android.graphics.drawable.GradientDrawable;
+import android.graphics.drawable.LayerDrawable;
 
 public final class UiTheme {
     private UiTheme() {}
@@ -135,6 +137,62 @@ public final class UiTheme {
         int accent = accent(context);
         return Color.argb(dark(context) ? 34 : 20, Color.red(accent),
                 Color.green(accent), Color.blue(accent));
+    }
+
+    // -- glass surfaces --
+
+    /**
+     * Backdrop for glass pages: a soft vertical wash plus two wide, low-alpha colour
+     * glows. The glows are what makes the translucent panels above read as frosted
+     * glass rather than plain grey — a panel only looks like glass when there is
+     * something soft behind it to show through.
+     *
+     * Real backdrop blur (blurring the *content behind* a view) needs API 31 window
+     * blur or a third-party library; this draws the same visual language with stock
+     * drawables, so it behaves identically from API 26 up.
+     */
+    public static Drawable glassBackground(Context context) {
+        boolean dark = dark(context);
+        GradientDrawable base = new GradientDrawable(
+                GradientDrawable.Orientation.TOP_BOTTOM,
+                dark ? new int[]{0xFF0C1120, 0xFF141B2E, 0xFF0F1524}
+                        : new int[]{0xFFEDF1FA, 0xFFF6F8FD, 0xFFEDF2FB});
+        GradientDrawable glowTop = new GradientDrawable();
+        glowTop.setGradientType(GradientDrawable.RADIAL_GRADIENT);
+        glowTop.setGradientRadius(dp(context, 300));
+        glowTop.setGradientCenter(0.15f, 0.05f);
+        glowTop.setColors(new int[]{dark ? 0x3D5B8CFF : 0x4D7FA8FF, 0x00000000});
+        GradientDrawable glowBottom = new GradientDrawable();
+        glowBottom.setGradientType(GradientDrawable.RADIAL_GRADIENT);
+        glowBottom.setGradientRadius(dp(context, 320));
+        glowBottom.setGradientCenter(0.9f, 0.95f);
+        glowBottom.setColors(new int[]{dark ? 0x33A78BFA : 0x3DC9A8FF, 0x00000000});
+        return new LayerDrawable(new Drawable[]{base, glowTop, glowBottom});
+    }
+
+    /** Translucent panel: frosted fill, a 1dp light edge, and a subtle top sheen. */
+    public static GradientDrawable glassCard(Context context, int radius) {
+        boolean dark = dark(context);
+        GradientDrawable d = new GradientDrawable(GradientDrawable.Orientation.TOP_BOTTOM,
+                dark ? new int[]{0x9E2A3145, 0x8C232A3C}
+                        : new int[]{0xC9FFFFFF, 0xB3FFFFFF});
+        d.setCornerRadius(radius);
+        d.setStroke(dp(context, 1), dark ? 0x26FFFFFF : 0x80FFFFFF);
+        return d;
+    }
+
+    /** Glass panel filled with an accent wash, for selected tabs and primary buttons. */
+    public static GradientDrawable glassFill(Context context, int color, int radius) {
+        GradientDrawable d = new GradientDrawable(GradientDrawable.Orientation.TOP_BOTTOM,
+                new int[]{withAlpha(color, dark(context) ? 0xE6 : 0xF0), withAlpha(color, 0xCC)});
+        d.setCornerRadius(radius);
+        d.setStroke(dp(context, 1), dark(context) ? 0x33FFFFFF : 0x66FFFFFF);
+        return d;
+    }
+
+    /** Same colour with its alpha replaced; keeps the RGB and drops any existing alpha. */
+    public static int withAlpha(int color, int alpha) {
+        return (color & 0x00FFFFFF) | (alpha << 24);
     }
 
     // -- drawable builders --

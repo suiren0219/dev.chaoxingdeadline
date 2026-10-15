@@ -1,6 +1,7 @@
 package dev.chaoxingdeadline;
 
 import android.app.AlertDialog;
+import android.content.Intent;
 import android.graphics.Color;
 import android.os.Bundle;
 import android.os.Handler;
@@ -8,6 +9,7 @@ import android.os.Looper;
 import android.text.TextUtils;
 import android.view.Gravity;
 import android.view.View;
+import android.widget.FrameLayout;
 import android.widget.LinearLayout;
 import android.widget.ScrollView;
 import android.widget.TextView;
@@ -17,8 +19,12 @@ import java.util.Calendar;
 import java.util.List;
 
 /**
- * 课表页：拾光风格的周网格。节次为行、周一~周日为列，多节课程跨行成色块；
- * 今天列高亮，正在上的课加描边，已过的课置灰；支持周次切换与手动刷新。
+ * 课表页：拾光风格的玻璃界面，三个板块 —— 今日 / 周 / 设置。
+ *
+ * 「周」是节次行 × 星期列的网格（多节课程跨行成色块、今天高亮、上课中描边）；
+ * 「今日」是当天课程的纵向卡片流；「设置」只收课表自己的开关（全局设置仍在模块设置页，
+ * 避免两份设置漂移）。玻璃观感照 NexioSchedule：柔和色底 + 半透明面板 + 细描边，
+ * 用原生 drawable 实现，不引入第三方依赖，API 26 起表现一致。
  *
  * 数据来自 Hook 捕获后经广播落入本进程 lessons 表，纯本地读取；刷新通过
  * {@link RefreshBridge} 请求宿主（学习通进程）重新拉取。
@@ -28,10 +34,15 @@ public final class ScheduleActivity extends BaseActivity {
     private static final int CELL_HEIGHT_DP = 52;
     private static final int MAX_WEEK = 30;
     private static final long REFRESH_GUARD_MS = 10_000L;
+    private static final String[] TAB_LABELS = {"今日", "周", "设置"};
+    private static final int TAB_TODAY = 0;
+    private static final int TAB_WEEK = 1;
+    private static final int TAB_SETTINGS = 2;
 
     private final Handler handler = new Handler(Looper.getMainLooper());
     /** Week the grid shows; <= 0 means "follow the current teaching week". */
     private int displayedWeek;
+    private int selectedTab = TAB_TODAY;
     private String lastSignature;
     private long refreshBlockedUntil;
 
@@ -92,19 +103,30 @@ public final class ScheduleActivity extends BaseActivity {
     }
 
     private View buildContent() {
-        LinearLayout root = new LinearLayout(this);
-        root.setOrientation(LinearLayout.VERTICAL);
-        root.setBackgroundColor(UiTheme.background(this));
-        root.setPadding(dp(12), statusBarHeight() + dp(8), dp(12), dp(16));
+        FrameLayout root = new FrameLayout(this);
+        // The glass wash sits behind everything; panels above it are translucent.
+        root.addView(GlassUi.backdrop(this), new FrameLayout.LayoutParams(-1, -1));
 
-        root.addView(titleBar(), new LinearLayout.LayoutParams(-1, dp(48)));
+        LinearLayout page = new LinearLayout(this);
+        page.setOrientation(LinearLayout.VERTICAL);
+        page.setPadding(dp(12), statusBarHeight() + dp(8), dp(12), dp(16));
+        root.addView(page, new FrameLayout.LayoutParams(-1, -1));
+
+        page.addView(titleBar(), new LinearLayout.LayoutParams(-1, dp(48)));
+        page.addView(GlassUi.tabStrip(this, TAB_LABELS, selectedTab,
+                index -> {
+                    if (index != selectedTab) {
+                        selectedTab = index;
+                        rebuild();
+                    }
+                }), new LinearLayout.LayoutParams(-1, -2));
 
         ScrollView scroll = new ScrollView(this);
         LinearLayout content = new LinearLayout(this);
         content.setOrientation(LinearLayout.VERTICAL);
-        content.setPadding(0, dp(6), 0, 0);
+        content.setPadding(0, dp(10), 0, 0);
         scroll.addView(content, new ScrollView.LayoutParams(-1, -2));
-        root.addView(scroll, new LinearLayout.LayoutParams(-1, 0, 1f));
+        page.addView(scroll, new LinearLayout.LayoutParams(-1, 0, 1f));
 
         DeadlineStore store = new DeadlineStore(this);
         long now = System.currentTimeMillis();
@@ -113,22 +135,28 @@ public final class ScheduleActivity extends BaseActivity {
         int currentWeek = ScheduleMath.currentWeek(now, firstWeekDate);
         List<Lesson> lessons = store.allLessons();
         int week = displayedWeek > 0 ? displayedWeek : Math.max(1, currentWeek);
-        Lesson current = ScheduleMath.currentLesson(
-                ScheduleMath.todayLessons(lessons, now, firstWeekDate), now, firstWeekDate, sectionTimes);
+        List<Lesson> today = ScheduleMath.todayLessons(lessons, now, firstWeekDate);
+        Lesson current = ScheduleMath.currentLesson(today, now, firstWeekDate, sectionTimes);
 
-        content.addView(weekSwitcher(week, currentWeek, firstWeekDate), groupParams());
-
+        if (selectedTab == TAB_SETTINGS) {
+            buildSettingsTab(content);
+            return root;
+        }
         if (lessons.isEmpty()) {
             content.addView(emptyCard(), groupParams());
             return root;
         }
-
-        TimetableGrid.Grid grid = TimetableGrid.build(lessons, week);
-        if (grid.rows == 0) {
-            content.addView(emptyWeekCard(week), groupParams());
+        if (selectedTab == TAB_TODAY) {
+            buildTodayTab(content, today, current, currentWeek, firstWeekDate, sectionTimes, now);
         } else {
-            content.addView(gridView(grid, week, currentWeek, current, firstWeekDate, sectionTimes, now),
-                    groupParams());
+            content.addView(weekSwitcher(week, currentWeek, firstWeekDate), groupParams());
+            TimetableGrid.Grid grid = TimetableGrid.build(lessons, week);
+            if (grid.rows == 0) {
+                content.addView(emptyWeekCard(week), groupParams());
+            } else {
+                content.addView(gridView(grid, week, currentWeek, current,
+                        firstWeekDate, sectionTimes, now), groupParams());
+            }
         }
 
         long updatedAt = store.scheduleUpdatedAt();
@@ -139,6 +167,155 @@ public final class ScheduleActivity extends BaseActivity {
             content.addView(stamp, new LinearLayout.LayoutParams(-1, -2));
         }
         return root;
+    }
+
+    // -- 今日 --
+
+    /** Today's lessons as a vertical card flow, earliest first, in-session called out. */
+    private void buildTodayTab(LinearLayout content, List<Lesson> today, Lesson current,
+                               int currentWeek, long firstWeekDate, String sectionTimes, long now) {
+        int day = ScheduleMath.todayDayOfWeek(now);
+        String head = DAY_NAMES[day - 1] + " · " + (currentWeek > 0 ? "第 " + currentWeek + " 周" : "寒暑假")
+                + " · " + today.size() + " 节课";
+        content.addView(GlassUi.sectionLabel(this, head), new LinearLayout.LayoutParams(-1, -2));
+
+        if (today.isEmpty()) {
+            LinearLayout panel = GlassUi.panel(this);
+            panel.setPadding(dp(20), dp(22), dp(20), dp(22));
+            panel.addView(GlassUi.title(this, "今天没课", 16), new LinearLayout.LayoutParams(-1, -2));
+            TextView body = GlassUi.body(this, currentWeek > 0
+                    ? "今天没有排课，好好休息。"
+                    : "还没有获取到课表：打开学习通的「课表」页面即可自动捕获。", 13);
+            body.setPadding(0, dp(8), 0, 0);
+            panel.addView(body, new LinearLayout.LayoutParams(-1, -2));
+            content.addView(panel, groupParams());
+            return;
+        }
+        for (Lesson lesson : today) {
+            content.addView(todayCard(lesson, current, currentWeek, firstWeekDate,
+                    sectionTimes, now), groupParams());
+        }
+    }
+
+    private View todayCard(Lesson lesson, Lesson current, int currentWeek, long firstWeekDate,
+                           String sectionTimes, long now) {
+        LinearLayout panel = GlassUi.panel(this);
+        panel.setPadding(dp(14), dp(14), dp(16), dp(14));
+
+        long start = currentWeek > 0 ? ScheduleMath.lessonStartAt(firstWeekDate, currentWeek,
+                lesson.dayOfWeek, lesson.beginSection, sectionTimes) : 0L;
+        long end = currentWeek > 0 ? ScheduleMath.lessonEndAt(firstWeekDate, currentWeek,
+                lesson.dayOfWeek, lesson.beginSection, lesson.sections, sectionTimes) : 0L;
+        boolean isCurrent = current != null && current.id != null && current.id.equals(lesson.id);
+        boolean isPast = end > 0L && now >= end;
+        int[] colors = courseColors(lesson.name);
+
+        // Colour strip on the left, like the widget card.
+        LinearLayout body = GlassUi.row(this);
+        View strip = new View(this);
+        strip.setBackground(UiTheme.fillOnly(this, colors[1], dp(2)));
+        LinearLayout.LayoutParams stripParams = new LinearLayout.LayoutParams(dp(4), -1);
+        stripParams.setMargins(0, 0, dp(12), 0);
+        body.addView(strip, stripParams);
+
+        LinearLayout texts = GlassUi.column(this);
+        TextView name = GlassUi.title(this, lesson.name == null || lesson.name.isEmpty()
+                ? "未命名课程" : lesson.name, 16);
+        name.setAlpha(isPast && !isCurrent ? 0.6f : 1f);
+        texts.addView(name, new LinearLayout.LayoutParams(-1, -2));
+
+        String range = (start > 0L ? DateText.clock(start) : "--:--")
+                + "–" + (end > 0L ? DateText.clock(end) : "--:--");
+        TextView time = GlassUi.body(this, range + " · "
+                + ScheduleMath.formatSections(lesson.beginSection, lesson.sections), 13);
+        time.setPadding(0, dp(4), 0, 0);
+        texts.addView(time, new LinearLayout.LayoutParams(-1, -2));
+
+        String label = lesson.label();
+        if (!label.isEmpty()) {
+            TextView place = GlassUi.body(this, label, 12);
+            place.setPadding(0, dp(2), 0, 0);
+            texts.addView(place, new LinearLayout.LayoutParams(-1, -2));
+        }
+        body.addView(texts, new LinearLayout.LayoutParams(0, -2, 1f));
+
+        String chipText = isCurrent ? "上课中" : (isPast ? "已结束" : "");
+        if (!chipText.isEmpty()) {
+            TextView chip = GlassUi.chip(this, chipText,
+                    isCurrent ? UiTheme.accent(this) : UiTheme.muted(this), Color.WHITE);
+            LinearLayout.LayoutParams chipParams = new LinearLayout.LayoutParams(-2, -2);
+            chipParams.setMargins(dp(8), 0, 0, 0);
+            body.addView(chip, chipParams);
+        }
+        panel.addView(body, new LinearLayout.LayoutParams(-1, -2));
+        panel.setOnClickListener(v -> showLessonDialog(lesson));
+        return panel;
+    }
+
+    // -- 课表设置 --
+
+    /**
+     * Only the timetable's own toggles live here. Anything global stays in the module's
+     * own settings screen, so the two screens can never disagree about one flag.
+     */
+    private void buildSettingsTab(LinearLayout content) {
+        content.addView(GlassUi.sectionLabel(this, "上课增强"), new LinearLayout.LayoutParams(-1, -2));
+        LinearLayout enhance = GlassUi.panel(this);
+        enhance.addView(GlassUi.switchRow(this, "上课期间加强检测",
+                "上课前 15 分钟起，对当期课程的课堂活动每 2 分钟刷新一次（签到、投票不错过）",
+                AppSettings.classSessionBoostEnabled(this),
+                (buttonView, checked) -> AppSettings.setClassSessionBoostEnabled(this, checked)),
+                new LinearLayout.LayoutParams(-1, -2));
+        content.addView(enhance, groupParams());
+
+        content.addView(GlassUi.sectionLabel(this, "数据"), new LinearLayout.LayoutParams(-1, -2));
+        LinearLayout data = GlassUi.panel(this);
+        DeadlineStore store = new DeadlineStore(this);
+        int total = store.allLessons().size();
+        TextView summary = GlassUi.body(this, "已保存 " + total + " 门课的上课时间"
+                + (store.scheduleUpdatedAt() > 0L
+                ? "，更新于 " + DateText.deadlineTime(store.scheduleUpdatedAt()) : ""), 12);
+        summary.setPadding(dp(16), dp(12), dp(16), dp(4));
+        data.addView(summary, new LinearLayout.LayoutParams(-1, -2));
+
+        View refresh = GlassUi.actionRow(this, "重新获取课表",
+                "向学习通请求当前周的课表；已取回的周次会保留");
+        refresh.setOnClickListener(v -> requestRefresh());
+        data.addView(refresh, new LinearLayout.LayoutParams(-1, -2));
+
+        View allWeeks = GlassUi.actionRow(this, "获取整学期课表",
+                "逐周取回 1-" + Math.min(20, MAX_WEEK) + " 周，需要一点时间");
+        allWeeks.setOnClickListener(v -> requestWholeSemester());
+        data.addView(allWeeks, new LinearLayout.LayoutParams(-1, -2));
+        content.addView(data, groupParams());
+
+        content.addView(GlassUi.sectionLabel(this, "跳转"), new LinearLayout.LayoutParams(-1, -2));
+        LinearLayout links = GlassUi.panel(this);
+        View widget = GlassUi.actionRow(this, "桌面小组件设置",
+                "今日课程小组件的外观与显示范围");
+        widget.setOnClickListener(v -> {
+            try {
+                startActivity(new Intent(this, SettingsActivity.class));
+            } catch (Throwable ignored) {
+            }
+        });
+        links.addView(widget, new LinearLayout.LayoutParams(-1, -2));
+        content.addView(links, groupParams());
+    }
+
+    /** Asks the host for every teaching week up to a sane bound, in one request. */
+    private void requestWholeSemester() {
+        long now = System.currentTimeMillis();
+        if (now < refreshBlockedUntil) {
+            Toast.makeText(this, "刷新刚请求过，稍候几秒", Toast.LENGTH_SHORT).show();
+            return;
+        }
+        refreshBlockedUntil = now + REFRESH_GUARD_MS;
+        int weeks = Math.min(RefreshBridge.MAX_SWEEP_WEEK, MAX_WEEK);
+        // One broadcast, not one per week: the host sweeps them serially with a pause,
+        // so the endpoint never sees a burst.
+        RefreshBridge.requestWeeksThrough(this, weeks);
+        Toast.makeText(this, "已请求 1-" + weeks + " 周课表，稍后自动更新", Toast.LENGTH_SHORT).show();
     }
 
     // -- chrome --

@@ -206,10 +206,13 @@ public final class SettingsActivity extends BaseActivity {
 
         // -- 关于 --
         content.addView(sectionHeader("其他"));
-        View update = actionRow("获取更新",
-                "当前 " + versionSubtitle() + "（" + signatureLabel() + "）；点按打开最新版下载页");
+        View update = actionRow("下载最新版",
+                "当前 " + versionSubtitle() + "（" + signatureLabel() + "）；直接下载与当前签名一致的安装包");
         update.setOnClickListener(v -> openLatestRelease());
         content.addView(update, groupParams());
+        View notes = actionRow("更新说明", "在浏览器中查看各版本的改动记录");
+        notes.setOnClickListener(v -> openReleaseNotes());
+        content.addView(notes, groupParams());
         View about = actionRow("关于", "版本信息与开源许可");
         about.setOnClickListener(v -> startActivity(new Intent(this, AboutActivity.class)));
         content.addView(about, groupParams());
@@ -282,10 +285,28 @@ public final class SettingsActivity extends BaseActivity {
         return debuggable ? "debug 签名" : "release 签名";
     }
 
+    /**
+     * Direct download of the newest build, not the release page: CI gives every release a
+     * fixed asset name, so this URL always resolves to the latest APK. The variant follows
+     * the installed signature — a release-signed APK cannot update a debug build (or the
+     * reverse), so handing out the wrong one only produces an install failure.
+     */
     private void openLatestRelease() {
+        boolean debuggable = (getApplicationInfo().flags
+                & android.content.pm.ApplicationInfo.FLAG_DEBUGGABLE) != 0;
+        String asset = debuggable ? "Deadline-debug.apk" : "Deadline-release.apk";
+        openUrl("https://github.com/suiren0219/dev.chaoxingdeadline/releases/latest/download/"
+                + asset);
+    }
+
+    /** Release page, for reading the changelog before downloading. */
+    private void openReleaseNotes() {
+        openUrl("https://github.com/suiren0219/dev.chaoxingdeadline/releases/latest");
+    }
+
+    private void openUrl(String url) {
         try {
-            startActivity(new Intent(Intent.ACTION_VIEW,
-                    Uri.parse("https://github.com/suiren0219/dev.chaoxingdeadline/releases/latest")));
+            startActivity(new Intent(Intent.ACTION_VIEW, Uri.parse(url)));
         } catch (Throwable throwable) {
             Toast.makeText(this, "未找到可用的浏览器", Toast.LENGTH_SHORT).show();
         }

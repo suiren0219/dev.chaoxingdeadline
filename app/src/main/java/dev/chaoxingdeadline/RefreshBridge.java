@@ -21,15 +21,24 @@ public final class RefreshBridge {
 
     /** Full refresh: courses, work, exams and the current timetable week. */
     public static void requestFull(Context context) {
-        send(context, 0);
+        send(context, 0, 0);
     }
 
     /** Timetable-only refresh for a specific teaching week (1-based). */
     public static void requestWeek(Context context, int week) {
-        send(context, week);
+        send(context, week, 0);
     }
 
-    private static void send(Context context, int week) {
+    /**
+     * Asks the host to sweep weeks 1 through {@code throughWeek} in one request. Sent as
+     * a single broadcast on purpose: one broadcast per week would start a thread per week
+     * and hammer the endpoint, which is what trips Chaoxing's anti-spider guard.
+     */
+    public static void requestWeeksThrough(Context context, int throughWeek) {
+        send(context, 0, throughWeek);
+    }
+
+    private static void send(Context context, int week, int throughWeek) {
         try {
             Intent intent = new Intent(DeadlineReceiver.ACTION_REQUEST_REFRESH);
             // setPackage keeps the exported receiver reachable only from this app
@@ -38,10 +47,18 @@ public final class RefreshBridge {
             if (week > 0) {
                 intent.putExtra(DeadlineReceiver.EXTRA_WEEK, week);
             }
+            if (throughWeek > 0) {
+                intent.putExtra(EXTRA_THROUGH_WEEK, throughWeek);
+            }
             intent.putExtra(DeadlineReceiver.EXTRA_REASON, "moduleRequest");
             BridgeAuth.attach(context, intent);
             context.sendBroadcast(intent);
         } catch (Throwable ignored) {
         }
     }
+
+    /** Highest teaching week a single sweep may pull; bounds the request count. */
+    public static final int MAX_SWEEP_WEEK = 20;
+
+    private static final String EXTRA_THROUGH_WEEK = "through_week";
 }

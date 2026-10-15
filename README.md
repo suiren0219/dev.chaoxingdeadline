@@ -8,7 +8,16 @@ LSPosed Xposed 模块，自动捕获超星学习通作业和考试截止时间�
 
 ## 下载
 
-[最新版本（本 fork 的 Release）](https://github.com/suiren0219/dev.chaoxingdeadline/releases/latest)
+**固定直链（永远指向最新版，可直接收藏）**
+
+- debug 签名：[Deadline-debug.apk](https://github.com/suiren0219/dev.chaoxingdeadline/releases/latest/download/Deadline-debug.apk)
+- release 签名：[Deadline-release.apk](https://github.com/suiren0219/dev.chaoxingdeadline/releases/latest/download/Deadline-release.apk)
+
+这两个地址不会随版本变化——每次发版都会用同名资产覆盖，所以存书签即可，不必每次找新链接。
+手机端更省事的方式：模块内 设置 →「下载最新版」，它会自动按当前安装的签名选对应的包。
+
+[版本改动记录（Release 页）](https://github.com/suiren0219/dev.chaoxingdeadline/releases/latest)｜
+[全部版本](https://github.com/suiren0219/dev.chaoxingdeadline/releases)
 
 > 上游仓库的 [Release](https://github.com/Xposed-Modules-Repo/dev.chaoxingdeadline/releases/latest) 只包含原作者的功能，
 > 本 fork 的小组件、课堂活动等新增功能请从上方链接下载。
@@ -45,7 +54,7 @@ adb shell su -c "cp /data/data/dev.chaoxingdeadline/databases/deadlines.db /sdca
 adb pull /sdcard/Download/deadlines.db
 python tools/db_to_backup.py deadlines.db        # 生成 deadlines-backup.json
 adb uninstall dev.chaoxingdeadline
-adb install Deadline-1.8.1-release.apk
+adb install Deadline-release.apk
 ```
 
 装好新版后：把 `deadlines-backup.json` 传到手机，走「设置 → 备份与导出 → 从备份恢复（JSON）」即可。
@@ -72,7 +81,7 @@ adb install Deadline-1.8.1-release.apk
 - **统计概览**（设置 → 管理）：未完成 / 已过期 / 已完成数量、未来 7 天截止分布、按课程的未完成数排行。
 - **备份与导出**：可导出 JSON 备份（换机 / 重装后恢复，含待办与设置）与 ICS 日历（导入系统日历、小米日历改用日历提醒）。通过系统文件选择器读写，不申请存储权限；模块本身没有 `INTERNET` 权限，备份文件不含任何凭据（桥接令牌刻意不导出）。
 - **快捷设置磁贴**：下拉通知栏的「待办」磁贴，一键打开待办列表并显示未完成数量。
-- **每日摘要**：每天定时推送一条汇总（默认 08:00，可改时间、可关闭），列出今天和未来 3 天的截止项；触发点落在免打扰时段时自动顺延。设置页「获取更新」可直达最新版下载页，并标注当前签名类型。
+- **每日摘要**：每天定时推送一条汇总（默认 08:00，可改时间、可关闭），列出今天和未来 3 天的截止项；触发点落在免打扰时段时自动顺延。设置页「下载最新版」按当前签名直接下载对应安装包，并显示当前版本号与签名类型。
 - **桌面小组件**：2x2「待办小卡」与 4x4（可缩回 4x2）「待办列表」，纯 RemoteViews 实现，不引入额外依赖；配色采用 [miuix](https://github.com/compose-miuix-ui/miuix) 的 HyperOS 风格色板，深浅色跟随系统；单条待办可跳转学习通对应页面。对齐《Xiaomi HyperOS 小部件设计规范》的尺寸与交互约束（无部件内滑动）。另有「今日课程」小组件：一页一张课程卡（课程色条 + 课名 + 时间段/节次 + 地点教师 + 上课中/已结束徽标），点卡片翻到下一节课，右上角显示 `2/3` 进度。
 - **课表与上课增强**：捕获学习通课表，按「第 1 周周一 + 星期 + 学校真实节次表」推算每节课的真实时间；课表页为周网格（节次行 × 星期列、课程色块跨行、今天高亮、上课中描边、周次切换），首页另有「今日课表」卡片，支持手动刷新与按周拉取；**课表按周累积**——逐周取回的课表合并保存、互不覆盖（此前拉第 N 周会清掉其他周），空周会区分「没拉过」与「这周确实没课」；上课前 15 分钟对当期课程的课堂活动列表每 2 分钟刷新一次，签到、投票、抢答不错过（设置 → 通知可关）。
 - **1.5 修复**：课程扫描评分不再自动屏蔽课程（此前连续多天空扫描会让该课程待办从列表/小组件/通知中静默消失，现只降频、数据保留）；错过的提醒按最贴近当前的档位补发（此前 20 分钟后截止的新条目会误报「提前 24 小时」）；修复弹层「已提交抑制」可能误杀 5 分钟内相近截止的待办；提醒/弹窗/小组件相关数据库与闹钟操作移入后台线程；通知改用应用自己的单色图标。

@@ -761,11 +761,27 @@ public final class ChaoxingHook extends XposedModule {
             return;
         }
         int week = intent.getIntExtra("week", 0);
-        if (week > 0) {
-            log(Log.INFO, TAG, "timetable refresh requested for week " + week);
+        int upToWeek = intent.getIntExtra("through_week", 0);
+        if (week > 0 || upToWeek > 0) {
+            final int from = Math.max(1, week);
+            final int to = upToWeek > 0 ? Math.max(from, upToWeek) : from;
+            log(Log.INFO, TAG, "timetable refresh requested for weeks " + from + "-" + to);
             Thread worker = new Thread(() -> {
                 try {
-                    fetchTimetable(week);
+                    // Serial with a pause between weeks: the same anti-spider guard that
+                    // paces the course list applies here, and firing one request per week
+                    // back-to-back is exactly what trips it.
+                    for (int target = from; target <= to; target++) {
+                        if (System.currentTimeMillis() < antiSpiderUntil) {
+                            log(Log.WARN, TAG, "stopped week sweep at week " + target
+                                    + ": antispider cooldown active");
+                            break;
+                        }
+                        fetchTimetable(target);
+                        if (target < to) {
+                            Thread.sleep(1200L);
+                        }
+                    }
                     emitStatus("课表已更新", "moduleRequest");
                 } catch (Throwable throwable) {
                     log(Log.WARN, TAG, "timetable refresh failed: " + throwable);
@@ -1647,12 +1663,16 @@ public final class ChaoxingHook extends XposedModule {
             return -1;
         }
         synchronized (FETCHED_URLS) {
-            if (!FETCHED_URLS.add(url)) {
+            // The key includes the POST body: the timetable endpoint keeps its URL fixed
+            // and takes the week in the body, so a URL-only key silently dropped every
+            // week after the first one.
+            String key = formBody == null || formBody.isEmpty() ? url : url + "\n" + formBody;
+            if (!FETCHED_URLS.add(key)) {
                 return 0;
             }
             if (FETCHED_URLS.size() > 800) {
                 FETCHED_URLS.clear();
-                FETCHED_URLS.add(url);
+                FETCHED_URLS.add(key);
             }
         }
         HttpURLConnection connection = null;
