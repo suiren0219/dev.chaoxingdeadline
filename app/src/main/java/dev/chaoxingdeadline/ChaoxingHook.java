@@ -1347,14 +1347,6 @@ public final class ChaoxingHook extends XposedModule {
         }
     }
 
-    /** Classroom activities are opt-in for the same reason as chapter tasks. */
-    private boolean activityNotificationsEnabled() {
-        try {
-            return getRemotePreferences(AppSettings.PREFS).getBoolean("notify_activity", false);
-        } catch (Throwable ignored) {
-            return false;
-        }
-    }
 
     private void addOverlayTodo(List<OverlayTodo> todos, OverlayTodo todo, long now) {
         if (todo == null || !isInOverlayWindow(todo.dueAt, now)) {
@@ -1363,9 +1355,8 @@ public final class ChaoxingHook extends XposedModule {
         if (!"\u4f5c\u4e1a".equals(todo.type) && !"\u8003\u8bd5".equals(todo.type)) {
             // Chapter tasks and classroom activities reach the overlay only when their
             // notifications are on; both are opt-in because they tend to be numerous.
-            boolean chapterOptIn = "\u7ae0\u8282".equals(todo.type) && chapterNotificationsEnabled();
-            boolean activityOptIn = "\u8bfe\u5802\u6d3b\u52a8".equals(todo.type) && activityNotificationsEnabled();
-            if (!chapterOptIn && !activityOptIn) {
+            boolean chapterOptIn = "章节".equals(todo.type) && chapterNotificationsEnabled();
+            if (!chapterOptIn) {
                 return;
             }
         }
@@ -2012,7 +2003,9 @@ public final class ChaoxingHook extends XposedModule {
      * for free. Identical payloads are skipped — the same JSON is seen by several hooks.
      */
     private void collectTimetable(String text, ParseContext context) {
-        if (!TimetableParser.looksLikeTimetable(text)) {
+        applyTimetableAliases();
+        String sourceUrl = context == null ? "" : context.url;
+        if (!TimetableParser.looksLikeTimetable(text, sourceUrl)) {
             logUnknownTimetableShape(text, context);
             return;
         }
@@ -2026,6 +2019,33 @@ public final class ChaoxingHook extends XposedModule {
         }
         lastTimetableSignature = signature;
         rememberTimetable(result);
+    }
+
+    /** Every distinct JSON key in a payload sample, in order of appearance. */
+    private static String jsonKeys(String text) {
+        java.util.LinkedHashSet<String> keys = new java.util.LinkedHashSet<>();
+        java.util.regex.Matcher matcher =
+                java.util.regex.Pattern.compile("\"([A-Za-z0-9_]{1,40})\"\\s*:")
+                        .matcher(text);
+        while (matcher.find() && keys.size() < 40) {
+            keys.add(matcher.group(1));
+        }
+        return keys.toString();
+    }
+
+    /**
+     * Hands the parser the school's own field names, if the user supplied any.
+     *
+     * Read from the remote preferences the module mirrors into this process and pushed into
+     * the parser only when it changed, so the intercept path pays a string comparison at most.
+     */
+    private void applyTimetableAliases() {
+        try {
+            String spec = getRemotePreferences(AppSettings.PREFS)
+                    .getString("timetable_aliases", "");
+            TimetableParser.setAliasSpec(spec);
+        } catch (Throwable ignored) {
+        }
     }
 
     /**
@@ -2055,8 +2075,11 @@ public final class ChaoxingHook extends XposedModule {
                 UNKNOWN_TIMETABLE_SIGNATURES.clear();
             }
         }
-        String sample = text.substring(0, Math.min(400, text.length())).replace('\n', ' ');
-        log(Log.WARN, TAG, "unparsed timetable-ish payload from " + url + ": " + sample);
+        String sample = text.substring(0, Math.min(600, text.length())).replace('\n', ' ');
+        // The keys are what the alias spec needs, so they are collected out of the sample and
+        // logged with it; the body itself stays truncated to keep the log readable.
+        log(Log.WARN, TAG, "unparsed timetable-ish payload from " + url
+                + " keys=" + jsonKeys(sample) + " body=" + sample);
     }
 
     /**

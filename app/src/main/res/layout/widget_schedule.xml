@@ -3,10 +3,11 @@
   合并小组件：一页课表、一页待办，点标题右侧的切换按钮翻面。
   浅色/深色文字与面板底色在渲染时按主题上色（见 DeadlineScheduleWidget）。
 
-  为什么用 ViewFlipper 而不是两个独立小组件：用户要的是「一个面板、点击切换」。
-  ViewFlipper 继承 ViewAnimator（FrameLayout 后代），可以静态 addView 填充；
+  为什么是 LinearLayout 而不是列表控件：RemoteViews 只能静态添加子视图。
   StackView/ListView 继承 AdapterView，其 addView 会抛 UnsupportedOperationException，
-  只能靠 RemoteViewsService 才能填数据。
+  只能用 RemoteViewsService 填数据（崩了就是一片空白）；ViewFlipper 虽然能 addView，
+  但一次只显示一个子视图，装不下「一次看几节课」。LinearLayout 是 ViewGroup，
+  RemoteViews.addView 直接支持，N 行就并排显示 N 行。
 -->
 <LinearLayout xmlns:android="http://schemas.android.com/apk/res/android"
     android:id="@+id/widget_schedule_root"
@@ -86,93 +87,27 @@
     </LinearLayout>
 
 
-    <!-- 当天课程圆点：每节课一个色点，一眼看出今天有几节、现在在第几节（学 Nexio） -->
+    <!-- 列表容器：一次显示多行（4x2 也要能看几节），不是 ViewFlipper -->
     <LinearLayout
-        android:id="@+id/s_dots"
-        android:layout_width="match_parent"
-        android:layout_height="wrap_content"
-        android:layout_marginTop="10dp"
-        android:gravity="center_vertical"
-        android:orientation="horizontal">
-
-        <TextView
-            android:id="@+id/s_dot1"
-            android:layout_width="8dp"
-            android:layout_height="8dp"
-            android:layout_marginEnd="5dp"
-            android:background="#7C9CFF" />
-
-        <TextView
-            android:id="@+id/s_dot2"
-            android:layout_width="8dp"
-            android:layout_height="8dp"
-            android:layout_marginEnd="5dp"
-            android:background="#7C9CFF" />
-
-        <TextView
-            android:id="@+id/s_dot3"
-            android:layout_width="8dp"
-            android:layout_height="8dp"
-            android:layout_marginEnd="5dp"
-            android:background="#7C9CFF" />
-
-        <TextView
-            android:id="@+id/s_dot4"
-            android:layout_width="8dp"
-            android:layout_height="8dp"
-            android:layout_marginEnd="5dp"
-            android:background="#7C9CFF" />
-
-        <TextView
-            android:id="@+id/s_dot5"
-            android:layout_width="8dp"
-            android:layout_height="8dp"
-            android:layout_marginEnd="5dp"
-            android:background="#7C9CFF" />
-
-        <TextView
-            android:id="@+id/s_dot6"
-            android:layout_width="8dp"
-            android:layout_height="8dp"
-            android:layout_marginEnd="5dp"
-            android:background="#7C9CFF" />
-
-        <TextView
-            android:id="@+id/s_dot7"
-            android:layout_width="8dp"
-            android:layout_height="8dp"
-            android:layout_marginEnd="5dp"
-            android:background="#7C9CFF" />
-
-        <TextView
-            android:id="@+id/s_dot8"
-            android:layout_width="8dp"
-            android:layout_height="8dp"
-            android:background="#7C9CFF" />
-
-        <TextView
-            android:id="@+id/s_remaining"
-            android:layout_width="0dp"
-            android:layout_height="wrap_content"
-            android:layout_marginStart="10dp"
-            android:layout_weight="1"
-            android:ellipsize="end"
-            android:maxLines="1"
-            android:text="还有 2 节课"
-            android:textColor="#99FFFFFF"
-            android:textSize="11sp" />
-    </LinearLayout>
-
-    <!-- 双面容器 -->
-    <ViewFlipper
-        android:id="@+id/s_flipper"
+        android:id="@+id/s_rows"
         android:layout_width="match_parent"
         android:layout_height="0dp"
-        android:layout_marginTop="12dp"
+        android:layout_marginTop="10dp"
         android:layout_weight="1"
-        android:animateFirstView="false"
-        android:inAnimation="@android:anim/fade_in"
-        android:outAnimation="@android:anim/fade_out" />
+        android:orientation="vertical" />
+
+
+    <!-- 仅供参考提示：课表来自教务系统同步，可能滞后 -->
+    <TextView
+        android:id="@+id/s_note"
+        android:layout_width="match_parent"
+        android:layout_height="wrap_content"
+        android:layout_marginTop="8dp"
+        android:ellipsize="end"
+        android:maxLines="1"
+        android:text="@string/widget_schedule_note"
+        android:textColor="#80FFFFFF"
+        android:textSize="10sp" />
 
     <!-- 课表面（无课时） -->
     <LinearLayout

@@ -1,97 +1,97 @@
 <?xml version="1.0" encoding="utf-8"?>
 <!--
-  课表卡片（合并小组件的课表面）：左侧课程色条 + 课名 / 时间段 · 节次 / 地点 · 教师，
-  右侧显示「第 n/N 节」。配色在渲染时按课程与主题上色（见 DeadlineScheduleWidget.card）。
+  课程行（合并小组件的课表面）：左侧课程色条 + 时间段 / 课名 / 地点，行高固定，
+  以便同一个面板能一次列出多节课（4x2 尺寸尤其需要）。
 
-  色条用 TextView 而不是 View：RemoteViews 只允许白名单控件，裸 View 会被 lint
-  拦下（RemoteViewLayout）并在部分桌面上失效。
+  色条用 TextView 而非 View：RemoteViews 只允许白名单控件，裸 View 会被 lint 拦下
+  （RemoteViewLayout）并在部分桌面上失效。
 -->
 <LinearLayout xmlns:android="http://schemas.android.com/apk/res/android"
     android:id="@+id/card_root"
     android:layout_width="match_parent"
-    android:layout_height="match_parent"
-    android:background="@drawable/widget_row_bg"
-    android:gravity="center_vertical"
-    android:orientation="horizontal"
-    android:padding="12dp">
+    android:layout_height="wrap_content"
+    android:orientation="vertical">
+
+    <!-- 行间距：只有后面还有课才显示，避免最后一行下方多出一段空白 -->
+    <TextView
+        android:id="@+id/card_gap"
+        android:layout_width="match_parent"
+        android:layout_height="5dp"
+        android:visibility="gone" />
+
+    <LinearLayout
+        android:layout_width="match_parent"
+        android:layout_height="wrap_content"
+        android:background="@drawable/widget_row_bg"
+        android:gravity="center_vertical"
+        android:orientation="horizontal"
+        android:paddingStart="10dp"
+        android:paddingEnd="10dp"
+        android:paddingTop="7dp"
+        android:paddingBottom="7dp">
 
     <TextView
         android:id="@+id/card_strip"
         android:layout_width="3dp"
-        android:layout_height="match_parent"
-        android:layout_marginEnd="12dp"
+        android:layout_height="34dp"
+        android:layout_marginEnd="10dp"
         android:background="#7C9CFF" />
+
+    <TextView
+        android:id="@+id/card_time"
+        android:layout_width="64dp"
+        android:layout_height="wrap_content"
+        android:lineSpacingExtra="1dp"
+        android:text="08:30&#10;10:05"
+        android:textColor="#7C9CFF"
+        android:textSize="11sp"
+        android:textStyle="bold" />
 
     <LinearLayout
         android:layout_width="0dp"
         android:layout_height="wrap_content"
+        android:layout_marginStart="8dp"
         android:layout_weight="1"
         android:orientation="vertical">
-
-        <TextView
-            android:id="@+id/card_time"
-            android:layout_width="match_parent"
-            android:layout_height="wrap_content"
-            android:ellipsize="end"
-            android:maxLines="1"
-            android:text="16:30-18:05"
-            android:textColor="#7C9CFF"
-            android:textSize="12sp"
-            android:textStyle="bold" />
 
         <TextView
             android:id="@+id/card_name"
             android:layout_width="match_parent"
             android:layout_height="wrap_content"
-            android:layout_marginTop="3dp"
             android:ellipsize="end"
-            android:maxLines="2"
+            android:maxLines="1"
             android:text="高等数学"
             android:textColor="#E6FFFFFF"
-            android:textSize="17sp"
+            android:textSize="14sp"
             android:textStyle="bold" />
 
         <TextView
             android:id="@+id/card_meta"
             android:layout_width="match_parent"
             android:layout_height="wrap_content"
-            android:layout_marginTop="4dp"
+            android:layout_marginTop="2dp"
             android:ellipsize="end"
             android:maxLines="1"
             android:text="教一101 · 张老师"
             android:textColor="#99FFFFFF"
-            android:textSize="12sp" />
+            android:textSize="11sp" />
     </LinearLayout>
 
-    <LinearLayout
+    <!-- 上课中 / 已结束 -->
+    <TextView
+        android:id="@+id/card_live"
         android:layout_width="wrap_content"
         android:layout_height="wrap_content"
-        android:layout_marginStart="8dp"
-        android:gravity="top|end"
-        android:orientation="vertical">
-
-        <TextView
-            android:id="@+id/card_index"
-            android:layout_width="wrap_content"
-            android:layout_height="wrap_content"
-            android:text="3/3"
-            android:textColor="#99FFFFFF"
-            android:textSize="12sp" />
-
-        <TextView
-            android:id="@+id/card_live"
-            android:layout_width="wrap_content"
-            android:layout_height="wrap_content"
-            android:layout_marginTop="6dp"
-            android:background="#3482FF"
-            android:paddingStart="7dp"
-            android:paddingEnd="7dp"
-            android:paddingTop="3dp"
-            android:paddingBottom="3dp"
-            android:text="上课中"
-            android:textColor="#FFFFFF"
-            android:textSize="10sp"
-            android:textStyle="bold"
-            android:visibility="gone" />
+        android:layout_marginStart="6dp"
+        android:background="#3482FF"
+        android:paddingStart="6dp"
+        android:paddingEnd="6dp"
+        android:paddingTop="2dp"
+        android:paddingBottom="2dp"
+        android:text="上课中"
+        android:textColor="#FFFFFF"
+        android:textSize="10sp"
+        android:textStyle="bold"
+        android:visibility="gone" />
     </LinearLayout>
 </LinearLayout>

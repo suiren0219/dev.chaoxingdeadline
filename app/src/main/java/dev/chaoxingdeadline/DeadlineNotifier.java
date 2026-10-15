@@ -30,14 +30,9 @@ public final class DeadlineNotifier {
     public static final String CHANNEL_QUIET = "deadline_quiet";
     /** Daily digest: one morning summary notification. */
     public static final String CHANNEL_DIGEST = "deadline_digest";
-    /**
-     * Permanent "next deadline" notification — the one HyperOS 2 lifts into the 超级岛.
-     * Low importance so it never buzzes; it is an ambient at-a-glance view.
-     */
-    public static final String CHANNEL_LIVE = "deadline_live";
-    private static final int LIVE_NOTIFICATION_ID = 0x4C49;
-    /** Progress window: the bar fills over the last 24h before the deadline. */
-    private static final long LIVE_WINDOW_MS = TimeUnit.HOURS.toMillis(24);
+    /** Class reminder: fired once, shortly before a lesson starts. */
+    public static final String CHANNEL_CLASS = "deadline_class";
+    private static final int CLASS_NOTIFICATION_ID = 0x434C;
 
     private static final String PREFS = "deadline_notify";
     private static final String KEY_ALARMS = "scheduled_alarms";
@@ -71,8 +66,8 @@ public final class DeadlineNotifier {
         createChannel(manager, CHANNEL_DIGEST, "每日摘要",
                 "每天定时推送的待办汇总，列出今天和未来 3 天的截止项",
                 NotificationManager.IMPORTANCE_DEFAULT);
-        createChannel(manager, CHANNEL_LIVE, "最近截止（超级岛）",
-                "常驻显示最近截止的待办，小米超级岛 / 实时活动会渲染这条通知",
+        createChannel(manager, CHANNEL_CLASS, "上课提醒",
+                "上课前按设定的提前量提醒",
                 NotificationManager.IMPORTANCE_LOW);
     }
 
@@ -187,89 +182,159 @@ public final class DeadlineNotifier {
             }
         }
         prefs(context).edit().putStringSet(KEY_ALARMS, scheduled).apply();
-        updateLiveNotification(context, items);
+        scheduleClassReminder(context);
     }
 
-    // -- 超级岛 / 常驻「最近截止」实时通知 (HyperOS 2 Live Updates) --
+    // -- 上课提醒 (standard notification, no live/ongoing form) --
 
     /**
-     * The next deadline to keep in the permanent notification. HyperOS 2 renders an
-     * ongoing progress notification in the 超级岛; other OEMs show it as a low-priority
-     * ongoing notice. Submitted / revoked / past-due rows are skipped, and the list is
-     * already type- and block-filtered by the caller (activeItems).
+     * Posts (or clears) the reminder for the lesson that starts in
+     * {@link AppSettings#classReminderMinutes} minutes.
+     *
+     * Deliberately a plain notification: no ongoing flag, no progress, no 超级岛. A class
+     * reminder is a single moment in time, and an ongoing notice is what makes HyperOS
+     * promote the notification into a persistent island entry — which is exactly what this
+     * is not. Cancelled the moment reminders are switched off or no class is near.
      */
-    static DeadlineItem pickLiveItem(List<DeadlineItem> items) {
-        if (items == null || items.isEmpty()) {
-            return null;
-        }
-        long now = System.currentTimeMillis();
-        DeadlineItem best = null;
-        for (DeadlineItem item : items) {
-            if (item == null || item.submitted || item.vanishedAt > 0L || item.dueAt <= now) {
-                continue;
-            }
-            if (best == null || item.dueAt < best.dueAt) {
-                best = item;
-            }
-        }
-        return best;
-    }
-
-    /** Post or refresh the permanent 超级岛 notification; cancel it when nothing is due. */
-    public static void updateLiveNotification(Context context, List<DeadlineItem> items) {
+    public static void updateClassReminder(Context context) {
         android.app.NotificationManager manager =
                 context.getSystemService(android.app.NotificationManager.class);
         if (manager == null) {
             return;
         }
-        if (!AppSettings.liveNotificationEnabled(context)) {
-            manager.cancel(LIVE_NOTIFICATION_ID);
+        if (!AppSettings.classReminderEnabled(context)) {
+            manager.cancel(CLASS_NOTIFICATION_ID);
             return;
         }
-        ensureChannel(context);
-        DeadlineItem item = pickLiveItem(items);
-        if (item == null) {
-            manager.cancel(LIVE_NOTIFICATION_ID);
-            return;
-        }
+        Lesson lesson = reminderLesson(context);
+        DeadlineStore store = new DeadlineStore(context);
+        long firstWeekDate = store.scheduleFirstWeekDate();
+        String sectionTimes = store.scheduleSectionTimes();
         long now = System.currentTimeMillis();
-        long start = item.dueAt - LIVE_WINDOW_MS;
-        if (start < 0L || start >= item.dueAt) {
-            start = now;
-        }
-        int progress = item.dueAt <= start ? 100
-                : (int) Math.max(0L, Math.min(100L, (now - start) * 100L / (item.dueAt - start)));
-        android.content.Intent intent = new android.content.Intent(context, MainActivity.class);
-        intent.setFlags(android.content.Intent.FLAG_ACTIVITY_NEW_TASK
-                | android.content.Intent.FLAG_ACTIVITY_CLEAR_TOP);
-        android.app.PendingIntent pending = android.app.PendingIntent.getActivity(
-                context, LIVE_NOTIFICATION_ID, intent,
-                android.app.PendingIntent.FLAG_UPDATE_CURRENT | android.app.PendingIntent.FLAG_IMMUTABLE);
-        String course = item.course == null ? "" : item.course;
-        android.app.Notification.Builder builder = new android.app.Notification.Builder(context, CHANNEL_LIVE)
-                .setSmallIcon(R.drawable.ic_notification)
-                .setContentTitle(item.title)
-                .setContentText((course.isEmpty() ? "" : course + " · ")
-                        + "剩余 " + formatRemaining(item.dueAt - now))
-                .setOngoing(true)
-                .setAutoCancel(false)
-                .setShowWhen(false)
-                .setCategory(android.app.Notification.CATEGORY_PROGRESS)
-                .setProgress(100, progress, false)
-                .setContentIntent(pending);
+        int week = ScheduleMath.currentWeek(now, firstWeekDate);
+        long start = ScheduleMath.lessonStartAt(firstWeekDate, week, lesson.dayOfWeek,
+                lesson.beginSection, sectionTimes);
+        long minutes = Math.max(1L, (start - now) / 60_000L);
+
+        ensureChannel(context);
+        String place = lesson.location == null || lesson.location.isEmpty() ? "" : lesson.location;
+        android.app.Notification.Builder builder =
+                new android.app.Notification.Builder(context, CHANNEL_CLASS)
+                        .setSmallIcon(R.drawable.ic_notification)
+                        .setContentTitle(minutes + " 分钟后上课 · " + lesson.name)
+                        .setContentText((place.isEmpty() ? "" : place + " · ")
+                                + ScheduleMath.formatSections(lesson.beginSection, lesson.sections)
+                                + " · " + DateText.clock(start))
+                        .setStyle(new android.app.Notification.BigTextStyle().bigText(
+                                lesson.name + "\n"
+                                        + (place.isEmpty() ? "" : "地点：" + place + "\n")
+                                        + "时间：" + DateText.clock(start) + " 开始 · "
+                                        + ScheduleMath.formatSections(lesson.beginSection, lesson.sections)))
+                        .setAutoCancel(true)
+                        .setShowWhen(false)
+                        .setCategory(android.app.Notification.CATEGORY_REMINDER)
+                        .setContentIntent(classReminderPendingIntent(context));
         try {
-            manager.notify(LIVE_NOTIFICATION_ID, builder.build());
+            manager.notify(CLASS_NOTIFICATION_ID, builder.build());
         } catch (Throwable ignored) {
-            // Some OEM builds refuse ongoing progress notices; nothing else to do.
         }
     }
 
-    public static void cancelLiveNotification(Context context) {
+    /** Clears the class reminder (switch turned off, data refresh, nothing due). */
+    public static void cancelClassReminder(Context context) {
         android.app.NotificationManager manager =
                 context.getSystemService(android.app.NotificationManager.class);
         if (manager != null) {
-            manager.cancel(LIVE_NOTIFICATION_ID);
+            manager.cancel(CLASS_NOTIFICATION_ID);
         }
+    }
+
+    /**
+     * Arms the alarm that will post the reminder for the next class, and clears the
+     * notification if the setting is off or nothing is scheduled.
+     *
+     * The reminder used to be posted only as a side effect of some other refresh, which
+     * made it fire at whatever moment that happened to be rather than ahead of the class.
+     * It gets its own alarm now: {@code now + lead} for the next lesson starting today,
+     * which is the exact moment the user asked to be told. One alarm at a time is enough
+     * because it is re-armed after every trigger and on every data change.
+     */
+    public static void scheduleClassReminder(Context context) {
+        AlarmManager alarm = (AlarmManager) context.getSystemService(Context.ALARM_SERVICE);
+        if (alarm == null) {
+            return;
+        }
+        cancelClassReminderAlarm(context);
+        if (!AppSettings.classReminderEnabled(context)) {
+            cancelClassReminder(context);
+            return;
+        }
+        long triggerAt = classReminderTriggerAt(context);
+        if (triggerAt <= 0L) {
+            cancelClassReminder(context);
+            return;
+        }
+        PendingIntent pending = classReminderAlarmIntent(context, PendingIntent.FLAG_UPDATE_CURRENT);
+        try {
+            if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.S && !alarm.canScheduleExactAlarms()) {
+                alarm.setAndAllowWhileIdle(AlarmManager.RTC_WAKEUP, triggerAt, pending);
+            } else {
+                alarm.setExactAndAllowWhileIdle(AlarmManager.RTC_WAKEUP, triggerAt, pending);
+            }
+        } catch (Throwable ignored) {
+        }
+    }
+
+    private static void cancelClassReminderAlarm(Context context) {
+        AlarmManager alarm = (AlarmManager) context.getSystemService(Context.ALARM_SERVICE);
+        if (alarm == null) {
+            return;
+        }
+        PendingIntent pending = classReminderAlarmIntent(context, PendingIntent.FLAG_NO_CREATE);
+        if (pending != null) {
+            alarm.cancel(pending);
+            pending.cancel();
+        }
+    }
+
+    /**
+     * When to fire the reminder for the next class, or 0 when there is none today.
+     *
+     * A lesson starting sooner than the lead time fires immediately rather than being
+     * skipped: the user is looking at a phone that just got its timetable, and a reminder
+     * that silently never arrives because the class was already inside the window is worse
+     * than one a few minutes late. The lower bound keeps it from firing for a lesson that
+     * has already begun.
+     */
+    static long classReminderTriggerAt(Context context) {
+        DeadlineStore store = new DeadlineStore(context);
+        return ScheduleMath.reminderTriggerAt(store.allLessons(), System.currentTimeMillis(),
+                store.scheduleFirstWeekDate(), store.scheduleSectionTimes(),
+                AppSettings.classReminderMinutes(context));
+    }
+
+    /** The lesson the reminder is about: today's next one, or null. */
+    static Lesson reminderLesson(Context context) {
+        DeadlineStore store = new DeadlineStore(context);
+        return ScheduleMath.nextLesson(store.allLessons(), System.currentTimeMillis(),
+                store.scheduleFirstWeekDate(), store.scheduleSectionTimes());
+    }
+
+    private static PendingIntent classReminderAlarmIntent(Context context, int flags) {
+        Intent intent = new Intent(context, DeadlineReceiver.class)
+                .setAction(DeadlineReceiver.ACTION_CLASS_REMINDER)
+                .setPackage(context.getPackageName());
+        BridgeAuth.attach(context, intent);
+        return PendingIntent.getBroadcast(context, CLASS_NOTIFICATION_ID, intent, flags);
+    }
+
+    private static android.app.PendingIntent classReminderPendingIntent(Context context) {
+        android.content.Intent intent = new android.content.Intent(context, ScheduleActivity.class);
+        intent.setFlags(android.content.Intent.FLAG_ACTIVITY_NEW_TASK
+                | android.content.Intent.FLAG_ACTIVITY_CLEAR_TOP);
+        return android.app.PendingIntent.getActivity(context, CLASS_NOTIFICATION_ID, intent,
+                android.app.PendingIntent.FLAG_UPDATE_CURRENT
+                        | android.app.PendingIntent.FLAG_IMMUTABLE);
     }
 
     private static String formatRemaining(long millis) {

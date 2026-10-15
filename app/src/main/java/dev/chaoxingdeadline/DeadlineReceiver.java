@@ -35,13 +35,13 @@ public final class DeadlineReceiver extends BroadcastReceiver {
     public static final String ACTION_COURSE_SCAN_PERF = "dev.chaoxingdeadline.COURSE_SCAN_PERF";
     public static final String ACTION_SETTINGS_UPDATE = "dev.chaoxingdeadline.SETTINGS_UPDATE";
     public static final String ACTION_WIDGET_REFRESH = "dev.chaoxingdeadline.WIDGET_REFRESH";
-    /** Merged widget: flip to the next lesson card (sent by the widget itself). */
-    public static final String ACTION_SCHEDULE_WIDGET_NEXT = "dev.chaoxingdeadline.SCHEDULE_WIDGET_NEXT";
     /** Merged widget: switch between its timetable and deadline faces. */
     public static final String ACTION_SCHEDULE_WIDGET_FACE = "dev.chaoxingdeadline.SCHEDULE_WIDGET_FACE";
     /** Merged widget's empty state: pull the timetable from the host. */
     public static final String ACTION_WIDGET_FETCH_TIMETABLE = "dev.chaoxingdeadline.WIDGET_FETCH_TIMETABLE";
     public static final String ACTION_DAILY_DIGEST = "dev.chaoxingdeadline.DAILY_DIGEST";
+    /** Fires ahead of the next class to post the 上课提醒 notification. */
+    public static final String ACTION_CLASS_REMINDER = "dev.chaoxingdeadline.CLASS_REMINDER";
     public static final String ACTION_SNOOZE = "dev.chaoxingdeadline.SNOOZE";
     public static final String ACTION_SNOOZE_FIRE = "dev.chaoxingdeadline.SNOOZE_FIRE";
     /**
@@ -187,6 +187,13 @@ public final class DeadlineReceiver extends BroadcastReceiver {
             DeadlineNotifier.sendDailyDigest(context);
             return;
         }
+        if (ACTION_CLASS_REMINDER.equals(intent.getAction())) {
+            // Post the reminder for this class, then re-arm for the following one: one
+            // alarm at a time keeps the chain alive without holding a whole day's queue.
+            DeadlineNotifier.updateClassReminder(context);
+            DeadlineNotifier.scheduleClassReminder(context);
+            return;
+        }
         if (ACTION_TIMETABLE.equals(intent.getAction())) {
             String lessonsJson = intent.getStringExtra("lessons");
             if (lessonsJson != null && !lessonsJson.isEmpty()) {
@@ -306,10 +313,6 @@ public final class DeadlineReceiver extends BroadcastReceiver {
         }
         if (ACTION_WIDGET_REFRESH.equals(intent.getAction())) {
             DeadlineWidgetProvider.updateAll(context);
-            return;
-        }
-        if (ACTION_SCHEDULE_WIDGET_NEXT.equals(intent.getAction())) {
-            DeadlineScheduleWidget.advancePage(context, intent.getIntExtra(EXTRA_APPWIDGET_ID, -1));
             return;
         }
         if (ACTION_SCHEDULE_WIDGET_FACE.equals(intent.getAction())) {

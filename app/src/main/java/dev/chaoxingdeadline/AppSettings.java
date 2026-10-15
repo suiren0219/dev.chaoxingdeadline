@@ -37,9 +37,11 @@ public final class AppSettings {
      */
     private static final Set<String> REMOTE_SETTING_KEYS = new HashSet<>(Arrays.asList(
             "overlay_enabled", "overlay_window_hours",
-            "notify_enabled", "notify_homework", "notify_exam", "notify_chapter", "notify_activity",
+            "notify_enabled", "notify_homework", "notify_exam", "notify_chapter",
             "notify_at_due", "notify_hours",
             "class_session_boost",
+            "class_reminder_minutes",
+            "timetable_aliases",
             "quiet_hours_enabled", "quiet_start", "quiet_end",
             "auto_delete_expired", "auto_remove_vanished", "launcher_hidden"));
 
@@ -72,10 +74,6 @@ public final class AppSettings {
     }
 
     /** Classroom activities (sign-in, poll, quiz race…) are opt-in like chapter tasks. */
-    public static boolean notifyActivity(Context context) {
-        return prefs(context).getBoolean("notify_activity", false);
-    }
-
     /** Remind at the exact deadline in addition to the advance offsets. */
     public static boolean notifyAtDue(Context context) {
         return prefs(context).getBoolean("notify_at_due", true);
@@ -303,6 +301,20 @@ public final class AppSettings {
         DeadlineNotifier.scheduleNextDigest(context);
     }
 
+    /**
+     * Whether the hook polls the in-session course's classroom-activity list during the
+     * first minutes of class (sign-ins happen there). On by default: one extra request
+     * per two minutes, only while a class is actually in session.
+     */
+    public static boolean classSessionBoostEnabled(Context context) {
+        return prefs(context).getBoolean("class_session_boost", true);
+    }
+
+    public static void setClassSessionBoostEnabled(Context context, boolean enabled) {
+        prefs(context).edit().putBoolean("class_session_boost", enabled).apply();
+        syncRemotePreferences(context);
+    }
+
     // -- widget configuration --
 
     public static boolean widgetShowCourse(Context context) {
@@ -338,6 +350,79 @@ public final class AppSettings {
     public static String widgetCourseFilterLabel(Context context) {
         String filter = widgetCourseFilter(context);
         return filter.isEmpty() ? "全部课程" : filter;
+    }
+
+    /**
+     * Whether the timetable widget shows the teacher along with the room.
+     *
+     * Some schools put a name the student does not recognise (or an assistant's) in the
+     * teacher field, and it is the least useful part of the line, so it is separable.
+     */
+    public static boolean widgetScheduleShowTeacher(Context context) {
+        return widgetPrefs(context).getBoolean("schedule_show_teacher", true);
+    }
+
+    public static void setWidgetScheduleShowTeacher(Context context, boolean value) {
+        widgetPrefs(context).edit().putBoolean("schedule_show_teacher", value).apply();
+    }
+
+    /**
+     * Minutes before a lesson starts to post the "going to class" reminder; 0 disables it.
+     * Choices mirror the reference app's, and the value is what the alarm is scheduled at.
+     */
+    public static int classReminderMinutes(Context context) {
+        int value = prefs(context).getInt("class_reminder_minutes", DEFAULT_CLASS_REMINDER_MINUTES);
+        return isClassReminderOption(value) ? value : DEFAULT_CLASS_REMINDER_MINUTES;
+    }
+
+    public static void setClassReminderMinutes(Context context, int minutes) {
+        int value = isClassReminderOption(minutes) ? minutes : DEFAULT_CLASS_REMINDER_MINUTES;
+        prefs(context).edit().putInt("class_reminder_minutes", value).apply();
+        syncRemotePreferences(context);
+    }
+
+    public static boolean classReminderEnabled(Context context) {
+        return classReminderMinutes(context) > 0;
+    }
+
+    /** 0 = off; otherwise the minutes of lead time. */
+    public static final int[] CLASS_REMINDER_OPTIONS = {0, 5, 10, 15, 20, 30, 45, 60};
+    public static final int DEFAULT_CLASS_REMINDER_MINUTES = 15;
+
+    private static boolean isClassReminderOption(int minutes) {
+        for (int option : CLASS_REMINDER_OPTIONS) {
+            if (option == minutes) {
+                return true;
+            }
+        }
+        return false;
+    }
+
+    /**
+     * Field-name aliases for the timetable parser, as "\u540d\u79f0=mc; \u661f\u671f=xq" groups.
+     *
+     * Some campus portals name their timetable fields in a vocabulary no heuristic can guess
+     * (see TimetableParser's class comment). Rather than guess harder and risk misreading
+     * unrelated payloads, the mapping is explicit and the user supplies it: the settings UI
+     * writes this string and the hooked process reads it, which is what makes an unknown
+     * school work without a new build.
+     */
+    public static String timetableAliases(Context context) {
+        return prefs(context).getString("timetable_aliases", "");
+    }
+
+    public static void setTimetableAliases(Context context, String spec) {
+        prefs(context).edit().putString("timetable_aliases",
+                spec == null ? "" : spec.trim()).apply();
+        syncRemotePreferences(context);
+    }
+
+    public static String classReminderLabel(Context context) {
+        int minutes = classReminderMinutes(context);
+        if (minutes <= 0) {
+            return "已关闭";
+        }
+        return "上课前 " + minutes + " 分钟";
     }
 
     // -- misc --
@@ -499,38 +584,6 @@ public final class AppSettings {
         prefs(context).edit().putBoolean("backup_restore_settings", value).apply();
     }
 
-    /**
-     * Whether the hook polls the in-session course's classroom-activity list during the
-     * first minutes of class (sign-ins happen there). On by default: one extra request
-     * per two minutes, only while a class is actually in session.
-     */
-    public static boolean classSessionBoostEnabled(Context context) {
-        return prefs(context).getBoolean("class_session_boost", true);
-    }
-
-    public static void setClassSessionBoostEnabled(Context context, boolean enabled) {
-        prefs(context).edit().putBoolean("class_session_boost", enabled).apply();
-        syncRemotePreferences(context);
-    }
-
-    /**
-     * Whether a permanent "next deadline" notification is kept alive. HyperOS 2 renders
-     * an ongoing progress notification in the 超级岛; other OEMs show it as a low-priority
-     * ongoing notice. On by default — it is the at-a-glance view of what is due next.
-     */
-    public static boolean liveNotificationEnabled(Context context) {
-        return prefs(context).getBoolean("live_notification", true);
-    }
-
-    public static void setLiveNotificationEnabled(Context context, boolean enabled) {
-        prefs(context).edit().putBoolean("live_notification", enabled).apply();
-        if (enabled) {
-            DeadlineNotifier.rescheduleAll(context);
-        } else {
-            DeadlineNotifier.cancelLiveNotification(context);
-        }
-    }
-
     public static void setAutoDeleteExpired(Context context, boolean enabled) {
         prefs(context).edit().putBoolean("auto_delete_expired", enabled).apply();
         if (enabled) {
@@ -560,7 +613,9 @@ public final class AppSettings {
             return notifyChapter(context);
         }
         if ("\u8bfe\u5802\u6d3b\u52a8".equals(type)) {
-            return notifyActivity(context);
+            // Classroom-activity reminders were removed; the type is still captured
+            // and listed, it just never schedules a notification.
+            return false;
         }
         return false;
     }

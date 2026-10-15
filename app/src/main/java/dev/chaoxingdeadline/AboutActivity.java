@@ -84,7 +84,8 @@ public final class AboutActivity extends BaseActivity {
         View disclaimer = actionRow("免责声明", "本工具仅用于个人待办提醒；项目不隶属于超星、学习通或学校平台，请遵守相关使用规则。");
         content.addView(disclaimer, groupParams());
 
-        View maintenance = actionRow("维护状态", "本 fork 已停止维护，不再接收新功能与适配；代码与文档保持现状。");
+        View maintenance = actionRow("维护状态",
+                "本 fork 已停止维护，1.18.0 为最后一个版本；不再接收新功能与适配，代码与文档保持现状。");
         content.addView(maintenance, groupParams());
 
         return root;

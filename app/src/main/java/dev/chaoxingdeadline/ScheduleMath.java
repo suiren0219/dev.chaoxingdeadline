@@ -181,6 +181,62 @@ public final class ScheduleMath {
         return out.toString();
     }
 
+    /**
+     * Rewrites a section-time array into the two shapes {@link #sectionBounds} reads.
+     *
+     * Schools publish the bell table as {@code ["8:00-8:45", …]}, as
+     * {@code [["8:00","8:45"], …]}, or as objects ({@code {"startTime":"8:00","endTime":"8:45"}}).
+     * Only the first two are understood downstream, so object entries are flattened into the
+     * first form here and everything else is passed through untouched — the timetable payload
+     * is stored as text, so a school's own spelling survives whenever it is already usable.
+     */
+    public static String normalizeSectionTimes(JSONArray times) {
+        if (times == null || times.length() == 0) {
+            return "";
+        }
+        JSONArray normalized = new JSONArray();
+        boolean changed = false;
+        for (int i = 0; i < times.length(); i++) {
+            Object entry = times.opt(i);
+            if (entry instanceof JSONArray) {
+                normalized.put(entry);
+                continue;
+            }
+            if (entry instanceof org.json.JSONObject) {
+                org.json.JSONObject json = (org.json.JSONObject) entry;
+                String start = firstText(json, "startTime", "beginTime", "start", "begin", "start_time");
+                String end = firstText(json, "endTime", "finishTime", "end", "end_time");
+                if (!start.isEmpty() && !end.isEmpty()) {
+                    normalized.put(start + "-" + end);
+                    changed = true;
+                    continue;
+                }
+            }
+            String text = entry == null ? "" : String.valueOf(entry).trim();
+            if (parseRange(text) != null) {
+                normalized.put(text);
+                continue;
+            }
+            // An unreadable entry is kept as-is rather than dropped: sectionBounds ignores
+            // what it cannot parse and falls back per section, so the others still work.
+            normalized.put(text);
+        }
+        if (!changed) {
+            return times.toString();
+        }
+        return normalized.toString();
+    }
+
+    private static String firstText(org.json.JSONObject json, String... keys) {
+        for (String key : keys) {
+            String value = json.optString(key, "");
+            if (!value.isEmpty() && !"null".equalsIgnoreCase(value)) {
+                return value.trim();
+            }
+        }
+        return "";
+    }
+
     /** Section start as minutes since midnight; falls back to the default table. */
     public static int sectionStartMinutes(String sectionTimesJson, int section) {
         int[] bounds = sectionBounds(sectionTimesJson, section);
@@ -223,6 +279,28 @@ public final class ScheduleMath {
         return weeksContains(lesson.weeks, week);
     }
 
+    /**
+     * Lessons of the calendar day containing {@code when}, earliest first.
+     *
+     * Same as {@link #todayLessons} except the day is passed in rather than read from the
+     * clock, which lets the widget preview tomorrow evening without a second code path.
+     */
+    public static List<Lesson> lessonsOn(List<Lesson> lessons, long when, long firstWeekDate) {
+        int week = currentWeek(when, firstWeekDate);
+        int day = todayDayOfWeek(when);
+        ArrayList<Lesson> result = new ArrayList<>();
+        if (lessons == null || week <= 0) {
+            return result;
+        }
+        for (Lesson lesson : lessons) {
+            if (lesson.dayOfWeek == day && isActiveInWeek(lesson, week)) {
+                result.add(lesson);
+            }
+        }
+        Collections.sort(result, Comparator.comparingInt(l -> l.beginSection));
+        return result;
+    }
+
     /** Today's lessons, earliest section first; empty when nothing is scheduled. */
     public static List<Lesson> todayLessons(List<Lesson> lessons, long now, long firstWeekDate) {
         int week = currentWeek(now, firstWeekDate);
@@ -238,6 +316,58 @@ public final class ScheduleMath {
         }
         Collections.sort(result, Comparator.comparingInt(l -> l.beginSection));
         return result;
+    }
+
+    /**
+     * The next lesson that has not started yet as of {@code now}, or null.
+     *
+     * Only the calendar day of {@code now} is considered: a reminder the evening before
+     * makes no sense, and the widget/notification pair both work off "today". A lesson in
+     * progress is skipped rather than returned, because every caller here is asking about
+     * something still to come.
+     */
+    public static Lesson nextLesson(List<Lesson> lessons, long now, long firstWeekDate,
+                                    String sectionTimesJson) {
+        int week = currentWeek(now, firstWeekDate);
+        if (week <= 0) {
+            return null;
+        }
+        for (Lesson lesson : lessonsOn(lessons, now, firstWeekDate)) {
+            long start = lessonStartAt(firstWeekDate, week, lesson.dayOfWeek,
+                    lesson.beginSection, sectionTimesJson);
+            if (start > now) {
+                return lesson;
+            }
+        }
+        return null;
+    }
+
+    /**
+     * When to fire a reminder {@code leadMinutes} before the next lesson, or 0 when there
+     * is none left today.
+     *
+     * A lesson already inside the lead window fires at once instead of being skipped: the
+     * timetable may have just arrived, and a reminder that never comes because the class
+     * was already close is worse than one a few minutes late. The one-second floor keeps
+     * the alarm in the future, which {@link android.app.AlarmManager} requires.
+     */
+    public static long reminderTriggerAt(List<Lesson> lessons, long now, long firstWeekDate,
+                                         String sectionTimesJson, int leadMinutes) {
+        if (leadMinutes <= 0) {
+            return 0L;
+        }
+        Lesson next = nextLesson(lessons, now, firstWeekDate, sectionTimesJson);
+        if (next == null) {
+            return 0L;
+        }
+        int week = currentWeek(now, firstWeekDate);
+        long start = lessonStartAt(firstWeekDate, week, next.dayOfWeek,
+                next.beginSection, sectionTimesJson);
+        if (start <= 0L) {
+            return 0L;
+        }
+        long fireAt = start - leadMinutes * 60_000L;
+        return Math.max(fireAt, now + 1_000L);
     }
 
     /** The lesson in session right now, or null. */

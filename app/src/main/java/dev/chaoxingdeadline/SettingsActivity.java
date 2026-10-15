@@ -14,6 +14,7 @@ import android.view.Gravity;
 import android.view.View;
 import android.widget.CompoundButton;
 import android.widget.EditText;
+import android.widget.FrameLayout;
 import android.widget.LinearLayout;
 import android.widget.ScrollView;
 import android.widget.Switch;
@@ -49,7 +50,7 @@ public final class SettingsActivity extends BaseActivity {
         LinearLayout note = card();
         note.setPadding(dp(16), dp(14), dp(16), dp(14));
         note.addView(text("本 fork 修改说明（suiren0219）", 15, true, UiTheme.text(this)), new LinearLayout.LayoutParams(-1, -2));
-        TextView noteBody = text("在原作者功能基础上，本 fork 补上了桌面小组件、课堂活动捕获、免打扰时段、"
+        TextView noteBody = text("在原作者功能基础上，本 fork 补上了桌面小组件、整学期课表、上课提醒、免打扰时段、"
                 + "每日摘要、备份导出、整学期课表与手动添加待办；早期实验性的「强制深色模式」已整体移除。"
                 + "\n\n"
                 + "维护状态：本 fork 已停止维护，不再接收新功能与适配。"
@@ -92,8 +93,7 @@ public final class SettingsActivity extends BaseActivity {
         group2.addView(switchRow("章节任务提醒", "章节任务点的截止时间提醒，可能产生较多通知", AppSettings.notifyChapter(this),
                 (b, c) -> { AppSettings.prefs(this).edit().putBoolean("notify_chapter", c).apply(); DeadlineNotifier.rescheduleUpcomingOnly(this); }));
         group2.addView(divider());
-        group2.addView(switchRow("课堂活动提醒", "课堂活动（签到、投票、抢答等）的截止时间提醒，默认关闭", AppSettings.notifyActivity(this),
-                (b, c) -> { AppSettings.prefs(this).edit().putBoolean("notify_activity", c).apply(); DeadlineNotifier.rescheduleUpcomingOnly(this); }));
+        group2.addView(classReminderRow());
         group2.addView(divider());
         group2.addView(switchRow("上课期间加强检测",
                 "上课前 15 分钟对当期课程的课堂活动每 2 分钟刷新一次，签到投票不错过",
@@ -106,11 +106,6 @@ public final class SettingsActivity extends BaseActivity {
         group2.addView(switchRow("紧急提醒渠道", "30 分钟内或已到截止时，使用独立的「即将截止」通知渠道（可单独设置铃声与免打扰）", AppSettings.urgentChannelEnabled(this),
                 (b, c) -> { AppSettings.prefs(this).edit().putBoolean("urgent_channel", c).apply(); }));
         group2.addView(divider());
-        group2.addView(switchRow("超级岛 · 最近截止",
-                "常驻显示最近截止的待办（小米超级岛 / 实时活动），带倒计时进度，点按打开列表",
-                AppSettings.liveNotificationEnabled(this),
-                (b, c) -> AppSettings.setLiveNotificationEnabled(this, c)));
-        group2.addView(divider());
         group2.addView(hourRow());
         group2.addView(divider());
         group2.addView(typeHoursRow("\u4f5c\u4e1a", "作业"));
@@ -119,10 +114,11 @@ public final class SettingsActivity extends BaseActivity {
         group2.addView(divider());
         group2.addView(typeHoursRow("\u7ae0\u8282", "章节"));
         group2.addView(divider());
-        TextView activityNote = text("课堂活动为即时提醒，不设提前量（签到、投票窗口通常只有几分钟）",
+        TextView classNote = text("上课提醒按课表提前提醒，使用系统原生通知；"
+                + "课表数据来自学习通，可能存在延迟，请以教务系统为准。",
                 12, false, UiTheme.muted(this));
-        activityNote.setPadding(dp(16), dp(13), dp(16), dp(13));
-        group2.addView(activityNote, new LinearLayout.LayoutParams(-1, -2));
+        classNote.setPadding(dp(16), dp(13), dp(16), dp(13));
+        group2.addView(classNote, new LinearLayout.LayoutParams(-1, -2));
         group2.addView(divider());
         View exactAlarm = innerActionRow("精确闹钟权限", exactAlarmSubtitle());
         exactAlarm.setOnClickListener(v -> openExactAlarmSettings());
@@ -171,6 +167,11 @@ public final class SettingsActivity extends BaseActivity {
         // -- 小组件（本 fork 新增）--
         content.addView(sectionHeader("小组件 · 本 fork 新增"));
         LinearLayout widgetGroup = card();
+        widgetGroup.addView(switchRow("课表显示教师", "关闭后课表小组件的每节课只显示教室，不显示教师姓名",
+                AppSettings.widgetScheduleShowTeacher(this),
+                (b, c) -> { AppSettings.setWidgetScheduleShowTeacher(this, c);
+                    DeadlineScheduleWidget.updateAll(this); }));
+        widgetGroup.addView(divider());
         widgetGroup.addView(switchRow("显示课程名", "关闭后小组件只显示标题和剩余时间",
                 AppSettings.widgetShowCourse(this),
                 (b, c) -> { AppSettings.setWidgetShowCourse(this, c); DeadlineWidgetProvider.updateAll(this); }));
@@ -184,7 +185,7 @@ public final class SettingsActivity extends BaseActivity {
         // -- 管理 --
         content.addView(sectionHeader("管理"));
         LinearLayout manageGroup = card();
-        View course = innerActionRow("课程管理", "手动选择哪些课程的作业、考试、章节任务和课堂活动需要显示");
+        View course = innerActionRow("课程管理", "手动选择哪些课程的作业、考试和章节任务需要显示");
         course.setOnClickListener(v -> startActivity(new Intent(this, CourseBlockActivity.class)));
         manageGroup.addView(course);
         manageGroup.addView(divider());
@@ -195,6 +196,13 @@ public final class SettingsActivity extends BaseActivity {
         View schedule = innerActionRow("课表", "周网格课表：今天高亮、周次切换、手动刷新；首页也有今日课表卡片");
         schedule.setOnClickListener(v -> startActivity(new Intent(this, ScheduleActivity.class)));
         manageGroup.addView(schedule);
+        manageGroup.addView(divider());
+        View aliases = innerActionRow("课表字段映射",
+                AppSettings.timetableAliases(this).isEmpty()
+                        ? "自动识别；若你的学校课表拉不到，在此填写字段名"
+                        : "已自定义：" + AppSettings.timetableAliases(this));
+        aliases.setOnClickListener(v -> showAliasDialog());
+        manageGroup.addView(aliases);
         manageGroup.addView(divider());
         manageGroup.addView(switchRow("自动移除已撤销待办",
                 "连续两次完整刷新都没出现的待办直接删除；关闭则只在列表里标记「可能已撤销」、暂停提醒",
@@ -222,6 +230,76 @@ public final class SettingsActivity extends BaseActivity {
         content.addView(about, groupParams());
 
         return root;
+    }
+
+    /** "N minutes before class" picker; 0 = off. */
+    private View classReminderRow() {
+        View row = innerActionRow("上课提醒", AppSettings.classReminderLabel(this)
+                + (AppSettings.classReminderEnabled(this) ? "提醒" : ""));
+        row.setOnClickListener(v -> {
+            int[] values = AppSettings.CLASS_REMINDER_OPTIONS;
+            String[] labels = new String[values.length];
+            int checked = 0;
+            int current = AppSettings.classReminderMinutes(this);
+            for (int i = 0; i < values.length; i++) {
+                labels[i] = values[i] == 0 ? "关闭" : "上课前 " + values[i] + " 分钟";
+                if (values[i] == current) {
+                    checked = i;
+                }
+            }
+            new AlertDialog.Builder(this)
+                    .setTitle("上课提醒")
+                    .setSingleChoiceItems(labels, checked, (dialog, which) -> {
+                        AppSettings.setClassReminderMinutes(this, values[which]);
+                        DeadlineNotifier.scheduleClassReminder(this);
+                        DeadlineNotifier.updateClassReminder(this);
+                        dialog.dismiss();
+                        recreate();
+                    })
+                    .setNegativeButton("取消", null)
+                    .show();
+        });
+        return row;
+    }
+
+    /**
+     * Editor for the timetable field-name aliases.
+     *
+     * Offered because a school whose portal names its fields in an unfamiliar vocabulary is
+     * otherwise unsupported, and no heuristic can guess a name like "mc" from first
+     * principles. The dialog states the format and where to find the names (the hook logs
+     * every unrecognised payload's URL and keys), so the user can supply the mapping from
+     * evidence instead of a guess.
+     */
+    private void showAliasDialog() {
+        EditText input = new EditText(this);
+        input.setText(AppSettings.timetableAliases(this));
+        input.setHint("名称=mc; 星期=xq; 节次=jc; 周次=zs; 教师=js; 地点=dd");
+        input.setSingleLine(false);
+        input.setMinLines(3);
+        int pad = dp(20);
+        FrameLayout wrapper = new FrameLayout(this);
+        wrapper.setPadding(pad, dp(8), pad, 0);
+        wrapper.addView(input, new FrameLayout.LayoutParams(-1, -2));
+        new AlertDialog.Builder(this)
+                .setTitle("课表字段映射")
+                .setMessage("字段名写在等号右边，逗号分隔；组之间用分号。"
+                        + "留空则恢复自动识别。\n\n"
+                        + "正常情况不需要填：课表会先按字段名识别，"
+                        + "识别不了再按「星期几 + 第几节 + 课程名」的结构识别。"
+                        + "\n\n若仍拉不到课表，在 LSPosed 日志里搜\"unparsed timetable\"，"
+                        + "日志会给出 URL 和字段名，照着填即可。")
+                .setView(wrapper)
+                .setPositiveButton("保存", (dialog, which) -> {
+                    AppSettings.setTimetableAliases(this, input.getText().toString());
+                    recreate();
+                })
+                .setNeutralButton("清空", (dialog, which) -> {
+                    AppSettings.setTimetableAliases(this, "");
+                    recreate();
+                })
+                .setNegativeButton("取消", null)
+                .show();
     }
 
     private String quietRangeLabel() {
