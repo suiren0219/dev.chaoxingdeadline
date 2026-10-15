@@ -216,7 +216,16 @@ public final class ChaoxingHook extends XposedModule {
                         Object result = chain.proceed();
                         Object arg = chain.getArg(0);
                         if (arg instanceof Context) {
-                            hostContext = ((Context) arg).getApplicationContext();
+                            // getApplicationContext() is still null here: LoadedApk stores the
+                            // application only after attach() returns, so this call is too early
+                            // for it. Storing that null used to leave hostContext empty, which made
+                            // registerRefreshRequestReceiver() below return without registering —
+                            // silently, so every refresh request the module app sent had no
+                            // receiver. The Application is a Context and lives as long as the
+                            // process, so it is a valid substitute.
+                            Context attached = (Context) arg;
+                            Context appContext = attached.getApplicationContext();
+                            hostContext = appContext != null ? appContext : attached;
                             Object receiver = chain.getThisObject();
                             if (receiver instanceof Application) {
                                 registerForegroundCallbacks((Application) receiver);
@@ -736,6 +745,19 @@ public final class ChaoxingHook extends XposedModule {
     private volatile boolean refreshReceiverRegistered;
 
     /**
+     * Set when a sweep stopped because of the anti-spider cooldown rather than because the
+     * semester ran out of lessons, so the caller can say so instead of reporting zero.
+     */
+    private volatile boolean blockedByCooldown;
+
+    /**
+     * Cooldown for the timetable endpoint only. The course scans own
+     * {@link #antiSpiderUntil}; a verification challenge there says nothing about this
+     * endpoint, which is a separate read path, so the two are tracked apart.
+     */
+    private volatile long timetableBlockedUntil;
+
+    /**
      * The module app's refresh buttons have to reach into this process: the hook
      * drives all capture and nothing else can ask for a round. Registered exported
      * (the module app is a different uid) but token-authenticated — the token lives
@@ -784,12 +806,14 @@ public final class ChaoxingHook extends XposedModule {
         }
         int week = intent.getIntExtra("week", 0);
         int upToWeek = intent.getIntExtra("through_week", 0);
-        if (week > 0 || upToWeek > 0) {
+        // "whole_semester" carries no week numbers at all, so it has to be part of this
+        // gate too: on its own the request used to fall through to the plain full-refresh
+        // branch below and never ask for a single week.
+        final boolean fullSemester = intent.getBooleanExtra("whole_semester", false);
+        if (week > 0 || upToWeek > 0 || fullSemester) {
             final int from = Math.max(1, week);
-            // "through_week" arrives as 0 for a single-week pull and as a sentinel for a
-            // full-semester sweep. The sweep asks for as many weeks as the endpoint will
-            // answer, not a fixed number, because maxWeek differs per school.
-            final boolean fullSemester = intent.getBooleanExtra("whole_semester", false);
+            // The sweep asks for as many weeks as the endpoint will answer, not a fixed
+            // number, because maxWeek differs per school.
             // A semester sweep runs to the declared length plus a probe margin, so the loop
             // can discover the real end (and get past a holiday) instead of being cut off
             // at maxWeek before it can tell the difference.
@@ -800,8 +824,15 @@ public final class ChaoxingHook extends XposedModule {
                     + (fullSemester ? " (semester sweep)" : ""));
             Thread worker = new Thread(() -> {
                 try {
+                    blockedByCooldown = false;
                     int found = sweepTimetableWeeks(from, to);
-                    emitStatus("课表已更新（" + found + " 周有课）", "moduleRequest");
+                    if (blockedByCooldown) {
+                        // Saying "0 weeks with lessons" here would read as an empty timetable
+                        // rather than as a sweep that never ran.
+                        emitStatus("接口在冷却中，稍后再试", "moduleRequest");
+                    } else {
+                        emitStatus("课表已更新（" + found + " 周有课）", "moduleRequest");
+                    }
                 } catch (Throwable throwable) {
                     log(Log.WARN, TAG, "timetable refresh failed: " + throwable);
                     emitStatus("课表更新失败", "moduleRequest");
@@ -1667,9 +1698,15 @@ public final class ChaoxingHook extends XposedModule {
         // course list: the per-course task-list / taskactivelist / exam endpoints are the
         // ones that actually trip anti-spider, and leaving them unguarded meant the next
         // refresh hammered them anyway. The 900ms pacing stays course-list-only.
+        //
+        // The timetable read is exempt: it is a separate endpoint that answers normally
+        // while the course endpoints are being challenged, and it is what a semester sweep
+        // is built from. Folding it into the cooldown made the sweep stop at week 1 every
+        // time a course scan had tripped a verification.
         boolean activeFetch = source != null && source.startsWith("active.");
+        boolean timetableFetch = source != null && source.startsWith("active.timetable");
         boolean pacedUrl = source != null && source.startsWith("active.courseList");
-        if (activeFetch && System.currentTimeMillis() < antiSpiderUntil) {
+        if (activeFetch && !timetableFetch && System.currentTimeMillis() < antiSpiderUntil) {
             log(Log.WARN, TAG, "skip active fetch while antispider cooldown is active, source=" + source);
             return -1;
         }
@@ -1707,7 +1744,16 @@ public final class ChaoxingHook extends XposedModule {
                 // referer; the app process never sends one on its own.
                 connection.setRequestProperty("Referer", "https://kb.chaoxing.com/");
             }
+            String cookie = cookieFor(url);
+            if (!cookie.isEmpty()) {
+                connection.setRequestProperty("Cookie", cookie);
+            }
             if (formBody != null) {
+                // Every header has to be on before this point: getOutputStream() connects,
+                // and HttpURLConnection rejects later setRequestProperty calls with
+                // IllegalStateException. The timetable endpoint is the one POST here, so
+                // the cookie used to land after the body was written — every timetable
+                // fetch died with that exception while the GET-based ones worked.
                 byte[] body = formBody.getBytes(StandardCharsets.UTF_8);
                 connection.setRequestMethod("POST");
                 connection.setDoOutput(true);
@@ -1715,10 +1761,6 @@ public final class ChaoxingHook extends XposedModule {
                 try (java.io.OutputStream out = connection.getOutputStream()) {
                     out.write(body);
                 }
-            }
-            String cookie = cookieFor(url);
-            if (!cookie.isEmpty()) {
-                connection.setRequestProperty("Cookie", cookie);
             }
             int code = connection.getResponseCode();
             StringBuilder builder = new StringBuilder();
@@ -1733,8 +1775,33 @@ public final class ChaoxingHook extends XposedModule {
             String body = builder.toString();
             log(Log.INFO, TAG, "active fetched " + code + " " + source + " len=" + body.length());
             if (body.contains("invalid_verify") || body.contains("请输入验证码")) {
+                if (timetableFetch) {
+                    // A challenge on the timetable endpoint itself; a sweep would only get
+                    // the same answer for every following week, so it waits this one out.
+                    timetableBlockedUntil = System.currentTimeMillis() + 30L * 60L * 1000L;
+                    log(Log.WARN, TAG, "timetable endpoint asked for verification, pausing sweeps");
+                } else {
+                    antiSpiderUntil = System.currentTimeMillis() + 30L * 60L * 1000L;
+                    log(Log.WARN, TAG, "active fetch paused because Chaoxing requested verification, source=" + source);
+                }
+                emitStatus("接口触发验证码，已暂停一会儿", source);
+                return -1;
+            }
+            // A 202 with a stub body is how the course-list endpoint says "verify first".
+            // It is scoped to the course endpoints on purpose: the timetable endpoint is a
+            // separate read-only path that keeps answering while courseList is challenged,
+            // so letting a courseList verification lock the timetable sweep meant the module
+            // asked for a semester, got the cooldown it had just created, and reported an
+            // empty timetable.
+            if (code == 202 && timetableFetch) {
+                timetableBlockedUntil = System.currentTimeMillis() + 30L * 60L * 1000L;
+                log(Log.WARN, TAG, "timetable endpoint answered 202 (verification), pausing sweeps");
+                emitStatus("接口触发验证码，已暂停一会儿", source);
+                return -1;
+            }
+            if (code == 202 && source != null && source.startsWith("active.courseList")) {
                 antiSpiderUntil = System.currentTimeMillis() + 30L * 60L * 1000L;
-                log(Log.WARN, TAG, "active fetch paused because Chaoxing requested verification, source=" + source);
+                log(Log.WARN, TAG, "course list asked for verification (202), pausing course scans");
                 emitStatus("接口触发验证码，已暂停一会儿", source);
                 return -1;
             }
@@ -1979,9 +2046,13 @@ public final class ChaoxingHook extends XposedModule {
         // patience: beyond maxWeek there is nothing to find, so two empties are conclusive.
         int declaredMax = maxWeekSeen > 0 ? maxWeekSeen : 0;
         for (int week = Math.max(1, fromWeek); week <= maxWeek; week++) {
-            if (System.currentTimeMillis() < antiSpiderUntil) {
+            if (System.currentTimeMillis() < timetableBlockedUntil) {
+                // Only the timetable endpoint's own verification stops a sweep; a cooldown
+                // created by the course scans must not, because those are a different
+                // endpoint that keeps answering.
                 log(Log.WARN, TAG, "stopped timetable sweep at week " + week
-                        + ": antispider cooldown active");
+                        + ": timetable endpoint asked for verification");
+                blockedByCooldown = true;
                 break;
             }
             synchronized (SWEPT_WEEKS) {
@@ -2436,9 +2507,7 @@ public final class ChaoxingHook extends XposedModule {
             Method currentApplication = activityThread.getDeclaredMethod("currentApplication");
             Object app = currentApplication.invoke(null);
             if (app instanceof Application) {
-                hostContext = ((Application) app).getApplicationContext();
-                log(Log.INFO, TAG, "host context recovered from currentApplication");
-                flushPending();
+                adoptHostContext((Application) app, "currentApplication");
                 return hostContext;
             }
             Method currentActivityThread = activityThread.getDeclaredMethod("currentActivityThread");
@@ -2448,9 +2517,7 @@ public final class ChaoxingHook extends XposedModule {
                 initialApplication.setAccessible(true);
                 app = initialApplication.get(thread);
                 if (app instanceof Application) {
-                    hostContext = ((Application) app).getApplicationContext();
-                    log(Log.INFO, TAG, "host context recovered from ActivityThread");
-                    flushPending();
+                    adoptHostContext((Application) app, "ActivityThread");
                     return hostContext;
                 }
             }
@@ -2458,6 +2525,21 @@ public final class ChaoxingHook extends XposedModule {
             log(Log.WARN, TAG, "recover host context failed: " + throwable.getClass().getSimpleName());
         }
         return null;
+    }
+
+    /**
+     * Adopts a recovered context and finishes what {@code Application.attach} could not.
+     *
+     * The first recovery happens after {@code attach} returned without a usable context, so
+     * the refresh receiver registration there was a no-op; retrying it here is what makes the
+     * module app's refresh buttons work at all.
+     */
+    private void adoptHostContext(Application application, String origin) {
+        Context appContext = application.getApplicationContext();
+        hostContext = appContext != null ? appContext : application;
+        log(Log.INFO, TAG, "host context recovered from " + origin);
+        registerRefreshRequestReceiver();
+        flushPending();
     }
 
     private void flushPending() {

@@ -18,7 +18,7 @@ import java.util.Set;
 
 public final class DeadlineStore extends SQLiteOpenHelper {
     private static final String DB_NAME = "deadlines.db";
-    private static final int DB_VERSION = 9;
+    private static final int DB_VERSION = 10;
     public static final String PREFS = "blocked_courses";
     private static final String SCHEDULE_PREFS = "schedule_meta";
     private static final String KEY_FIRST_WEEK_DATE = "first_week_date";
@@ -30,11 +30,11 @@ public final class DeadlineStore extends SQLiteOpenHelper {
     private static final String KEY_MAX_WEEK = "max_week";
     private static final String KEY_LEGACY_COURSES = "courses";
     private static final String KEY_BLOCKED_RULES = "rules";
-    private static final String TYPE_ALL = "\u5168\u90e8";
-    private static final String TYPE_HOMEWORK = "\u4f5c\u4e1a";
-    private static final String TYPE_EXAM = "\u8003\u8bd5";
-    private static final String TYPE_CHAPTER = "\u7ae0\u8282";
-    private static final String TYPE_ACTIVITY = "\u8bfe\u5802\u6d3b\u52a8";
+    static final String TYPE_ALL = "\u5168\u90e8";
+    static final String TYPE_HOMEWORK = "\u4f5c\u4e1a";
+    static final String TYPE_EXAM = "\u8003\u8bd5";
+    static final String TYPE_CHAPTER = "\u7ae0\u8282";
+    static final String TYPE_ACTIVITY = "\u8bfe\u5802\u6d3b\u52a8";
     /** Rows past their deadline by this much are housekeeping-deleted on upsert. */
     private static final long EXPIRED_RETENTION_MS = 90L * 24L * 60L * 60L * 1000L;
     // courses table lookups happen on every activeItems()/widget refresh; cache the
@@ -71,6 +71,8 @@ public final class DeadlineStore extends SQLiteOpenHelper {
                 + "submit_state INTEGER NOT NULL DEFAULT -1,"
                 + "misses INTEGER NOT NULL DEFAULT 0,"
                 + "vanished_at INTEGER NOT NULL DEFAULT 0,"
+                + "settled_at INTEGER NOT NULL DEFAULT 0,"
+                + "last_seen_at INTEGER NOT NULL DEFAULT 0,"
                 + "source TEXT,"
                 + "url TEXT,"
                 + "updated_at INTEGER NOT NULL,"
@@ -131,6 +133,18 @@ public final class DeadlineStore extends SQLiteOpenHelper {
             // match across the legacy/real course-id spaces. Runs once, in the upgrade
             // transaction, so existing duplicates heal themselves on install.
             repairDuplicates(db, true);
+        }
+        if (oldVersion < 10) {
+            // 1.18.4: completion bookkeeping for the course-task overview. settled_at marks
+            // when an item stopped being actionable (submitted by the school's own fields,
+            // judged finished by hand, or no longer reported by an authoritative scan);
+            // last_seen_at is the last scan that did report it, which is what lets the
+            // history list say "last seen on …" instead of guessing.
+            addColumn(db, "deadlines", "settled_at", "INTEGER NOT NULL DEFAULT 0");
+            addColumn(db, "deadlines", "last_seen_at", "INTEGER NOT NULL DEFAULT 0");
+            // Rows already known to be submitted were settled before this column existed,
+            // so give them the only timestamp available rather than leaving them dateless.
+            db.execSQL("UPDATE deadlines SET settled_at = updated_at WHERE submitted != 0 AND settled_at = 0");
         }
     }
 
@@ -835,11 +849,24 @@ public final class DeadlineStore extends SQLiteOpenHelper {
                         continue;
                     }
                     if (seen.contains(item.id)) {
+                        // Re-reported by an authoritative scan: this is what "last seen"
+                        // records, and it is also what keeps a silently-removed item from
+                        // being mistaken for a finished one.
+                        ContentValues seenValues = new ContentValues();
+                        seenValues.put("last_seen_at", now);
                         if (item.misses != 0 || item.vanishedAt > 0L) {
-                            item.misses = 0;
-                            item.vanishedAt = 0L;
-                            updates.add(item);
+                            seenValues.put("misses", 0);
+                            seenValues.put("vanished_at", 0L);
+                            // A row that had been settled *because* it stopped being
+                            // reported comes back when it is reported again — the teacher
+                            // re-opened it, or the earlier absence was a fluke. Settlements
+                            // from submission are left alone: a task the school calls
+                            // submitted but still lists is not reopened by that listing.
+                            if (item.vanishedAt > 0L && item.settledAt == item.vanishedAt) {
+                                seenValues.put("settled_at", 0L);
+                            }
                         }
+                        db.update("deadlines", seenValues, "id = ?", new String[]{item.id});
                         continue;
                     }
                     item.misses = item.misses + 1;
@@ -849,9 +876,16 @@ public final class DeadlineStore extends SQLiteOpenHelper {
                             flagged++;
                         }
                         if (autoRemove) {
+                            // The user explicitly asked for these to be removed, so the
+                            // delete wins over the history entry this would otherwise
+                            // become. With the default (off) the row stays, carries the
+                            // 可能已撤销 badge and settles into the finished list.
                             deleteIds.add(item.id);
                             continue;
                         }
+                        // Settling is what takes it out of the open list; the row keeps the
+                        // stamp so the history can still show what happened to it.
+                        item.settledAt = item.vanishedAt;
                     }
                     updates.add(item);
                 }
@@ -860,6 +894,7 @@ public final class DeadlineStore extends SQLiteOpenHelper {
                 ContentValues values = new ContentValues();
                 values.put("misses", item.misses);
                 values.put("vanished_at", item.vanishedAt);
+                values.put("settled_at", item.settledAt);
                 db.update("deadlines", values, "id = ?", new String[]{item.id});
             }
             for (String id : deleteIds) {
@@ -869,6 +904,9 @@ public final class DeadlineStore extends SQLiteOpenHelper {
         } finally {
             db.endTransaction();
         }
+        // A row the round just flagged (or that the school already reports as submitted)
+        // must leave the open list at once, not on the next unrelated capture.
+        settleFinished();
         return flagged;
     }
 
@@ -895,11 +933,159 @@ public final class DeadlineStore extends SQLiteOpenHelper {
         }
         SQLiteDatabase db = getWritableDatabase();
         ContentValues values = new ContentValues();
+        long now = System.currentTimeMillis();
         values.put("submitted", submitted ? 1 : 0);
         values.put("submit_state", submitted
                 ? DeadlineItem.SUBMISSION_SUBMITTED : DeadlineItem.SUBMISSION_UNSUBMITTED);
-        values.put("updated_at", System.currentTimeMillis());
+        // A manual tap settles (or reopens) the row immediately; without this the 已完成
+        // list would only catch up on the next capture that happened to carry the state.
+        values.put("settled_at", submitted ? now : 0L);
+        values.put("updated_at", now);
         db.update("deadlines", values, "id = ?", new String[]{id});
+    }
+
+    // -- completion bookkeeping --
+
+    /** How long a settled item stays in the 已完成 list before it becomes history only. */
+    public static final long SETTLED_WINDOW_MS = 14L * 24L * 60L * 60L * 1000L;
+
+    /**
+     * Stamps settlement on every row whose state can be decided from what is already stored.
+     *
+     * This is the module-side half of "已完成": the school's own fields say submitted, the
+     * user said done, the deadline slid past, or an authoritative scan stopped reporting it
+     * (see {@link #applyScanRound}, which is where the last case is detected). Kept as one
+     * pass over the table so the settle rules live in exactly one place; the hook never has
+     * to know about them.
+     *
+     * @return number of rows newly settled
+     */
+    public int settleFinished() {
+        long now = System.currentTimeMillis();
+        ArrayList<String> ids = new ArrayList<>();
+        ArrayList<Long> stamps = new ArrayList<>();
+        SQLiteDatabase db = getWritableDatabase();
+        db.beginTransaction();
+        try {
+            try (Cursor cursor = db.query("deadlines", null, "settled_at = 0", null, null, null, null)) {
+                while (cursor.moveToNext()) {
+                    DeadlineItem item = DeadlineItem.fromCursor(cursor);
+                    long reason = settlementOf(item, now);
+                    if (reason <= 0L) {
+                        continue;
+                    }
+                    ids.add(item.id);
+                    // Settle by the rule that matched, so the stored stamp is the time the
+                    // state became true rather than the time this sweep happened to run.
+                    stamps.add(reason);
+                }
+            }
+            for (int i = 0; i < ids.size(); i++) {
+                ContentValues values = new ContentValues();
+                values.put("settled_at", stamps.get(i));
+                db.update("deadlines", values, "id = ?", new String[]{ids.get(i)});
+            }
+            db.setTransactionSuccessful();
+        } finally {
+            db.endTransaction();
+        }
+        return ids.size();
+    }
+
+    /** The time this item became finished, or 0 while it is still open. */
+    private static long settlementOf(DeadlineItem item, long now) {
+        if (item == null) {
+            return 0L;
+        }
+        if (item.submitted || item.submissionState == DeadlineItem.SUBMISSION_SUBMITTED) {
+            // The school reports it done; the capture time is the best stamp available.
+            return item.lastSeenAt > 0L ? item.lastSeenAt : (item.dueAt > 0L ? item.dueAt : now);
+        }
+        if (item.vanishedAt > 0L) {
+            return item.vanishedAt;
+        }
+        if (item.dueAt > 0L && item.dueAt <= now) {
+            // Past due and never reported as submitted: closed either way, and keeping it in
+            // the open list would only make the count lie.
+            return item.dueAt;
+        }
+        // Still open. Note the deliberate omission of the chapter type: chapter points are
+        // passive-only, so "not re-reported" carries no information about them.
+        return 0L;
+    }
+
+    /**
+     * Items the user can still act on, newest deadline first within each course.
+     *
+     * The overview is grouped by course in the UI, so the flat list here is ordered by
+     * course and then by deadline; callers that need a single global order sort again.
+     */
+    public List<DeadlineItem> openItems() {
+        return queryItems("settled_at = 0", null, "due_at ASC");
+    }
+
+    /** Items finished within the window, most recently finished first. */
+    public List<DeadlineItem> recentlyFinished(long windowMs) {
+        long cutoff = windowMs <= 0L ? 0L : System.currentTimeMillis() - windowMs;
+        return queryItems("settled_at > 0 AND settled_at >= ?",
+                new String[]{String.valueOf(cutoff)}, "settled_at DESC");
+    }
+
+    private List<DeadlineItem> queryItems(String where, String[] args, String orderBy) {
+        ArrayList<DeadlineItem> items = new ArrayList<>();
+        try (Cursor cursor = getReadableDatabase().query(
+                "deadlines", null, where, args, null, null, orderBy)) {
+            while (cursor.moveToNext()) {
+                DeadlineItem item = DeadlineItem.fromCursor(cursor);
+                if (!isSupportedType(item.type)) {
+                    continue;
+                }
+                resolveCourse(item);
+                if (!isBlocked(item.course, item.type)) {
+                    items.add(item);
+                }
+            }
+        }
+        return items;
+    }
+
+    /** Open items of one course, deadline first: what the course detail screen lists. */
+    public List<DeadlineItem> openItemsOfCourse(String course) {
+        if (course == null || course.isEmpty()) {
+            return Collections.emptyList();
+        }
+        ArrayList<DeadlineItem> result = new ArrayList<>();
+        for (DeadlineItem item : openItems()) {
+            if (course.equals(item.course)) {
+                result.add(item);
+            }
+        }
+        return result;
+    }
+
+    /** Recently finished items of one course, newest first. */
+    public List<DeadlineItem> recentlyFinishedOfCourse(String course, long windowMs) {
+        if (course == null || course.isEmpty()) {
+            return Collections.emptyList();
+        }
+        ArrayList<DeadlineItem> result = new ArrayList<>();
+        for (DeadlineItem item : recentlyFinished(windowMs)) {
+            if (course.equals(item.course)) {
+                result.add(item);
+            }
+        }
+        return result;
+    }
+
+    /**
+     * Every supported row, open or not, in course then deadline order.
+     *
+     * The chapter progress panel needs finished chapter points too — a section whose task
+     * point was submitted must still count toward "已完成 n/m" — so this deliberately does
+     * not filter by settled state the way {@link #openItems()} does.
+     */
+    public List<DeadlineItem> allItems() {
+        return queryItems(null, null, "course ASC, due_at ASC");
     }
 
     // -- weekly timetable (课程表) --

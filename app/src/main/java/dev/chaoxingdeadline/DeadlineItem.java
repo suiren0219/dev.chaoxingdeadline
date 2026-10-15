@@ -30,6 +30,18 @@ public final class DeadlineItem {
     public int misses;
     /** When the item was flagged as probably revoked/cancelled; 0 = not flagged. */
     public long vanishedAt;
+    /**
+     * When the item stopped being actionable: submitted (per the school's own fields or a
+     * manual tap), flagged revoked, or past its deadline. 0 = still open. Drives the
+     * 已完成 section and the history list.
+     */
+    public long settledAt;
+    /**
+     * Last authoritative scan that re-reported this item, 0 when it was only ever captured
+     * passively. History says "最后出现于 …" from this, which is honest about the fact that
+     * a school-side removal and a finished task look identical from the outside.
+     */
+    public long lastSeenAt;
     public String source;
     public String url;
     public String raw;
@@ -53,6 +65,8 @@ public final class DeadlineItem {
         values.put("submit_state", storedSubmissionState);
         values.put("misses", misses);
         values.put("vanished_at", vanishedAt);
+        values.put("settled_at", settledAt);
+        values.put("last_seen_at", lastSeenAt);
         values.put("source", source);
         values.put("url", url);
         values.put("updated_at", System.currentTimeMillis());
@@ -77,6 +91,8 @@ public final class DeadlineItem {
         json.put("submitState", submissionState);
         json.put("misses", misses);
         json.put("vanishedAt", vanishedAt);
+        json.put("settledAt", settledAt);
+        json.put("lastSeenAt", lastSeenAt);
         json.put("source", source);
         json.put("url", url);
         json.put("raw", raw);
@@ -99,6 +115,8 @@ public final class DeadlineItem {
         item.dueAt = json.optLong("dueAt", 0L);
         item.misses = json.optInt("misses", 0);
         item.vanishedAt = json.optLong("vanishedAt", 0L);
+        item.settledAt = json.optLong("settledAt", 0L);
+        item.lastSeenAt = json.optLong("lastSeenAt", 0L);
         if (json.has("submitState")) {
             item.setSubmissionState(json.optInt("submitState", SUBMISSION_UNKNOWN));
         } else if (json.optBoolean("submitted", false)) {
@@ -128,6 +146,8 @@ public final class DeadlineItem {
                 item.submitted ? SUBMISSION_SUBMITTED : SUBMISSION_UNKNOWN));
         item.misses = intOrDefault(cursor, "misses", 0);
         item.vanishedAt = longOrDefault(cursor, "vanished_at", 0L);
+        item.settledAt = longOrDefault(cursor, "settled_at", 0L);
+        item.lastSeenAt = longOrDefault(cursor, "last_seen_at", 0L);
         item.source = stringOrEmpty(cursor, "source");
         item.url = stringOrEmpty(cursor, "url");
         item.raw = stringOrEmpty(cursor, "raw");
@@ -192,6 +212,33 @@ public final class DeadlineItem {
         }
         submissionState = state;
         submitted = state == SUBMISSION_SUBMITTED;
+    }
+
+    /**
+     * Whether this item still needs the user's attention.
+     *
+     * "Open" is deliberately the conservative reading: an item is finished only when the
+     * school's own fields say so, the user marked it done, or an authoritative scan stopped
+     * reporting it after its deadline had passed. A chapter point that a scan never covers
+     * (those are passive-only) must not count as finished just because nobody re-reported it,
+     * so {@link #lastSeenAt} has to be non-zero before the scan-based rule applies.
+     */
+    public boolean isOpen(long now) {
+        if (settledAt > 0L) {
+            return false;
+        }
+        if (submitted || submissionState == SUBMISSION_SUBMITTED) {
+            return false;
+        }
+        return dueAt <= 0L || dueAt > now;
+    }
+
+    /** Whether this item is done but recent enough to show in the 已完成 list. */
+    public boolean isSettled(long now, long windowMs) {
+        if (settledAt <= 0L) {
+            return false;
+        }
+        return windowMs <= 0L || now - settledAt <= windowMs;
     }
 
     private static boolean empty(String value) {
