@@ -3,6 +3,27 @@
 本项目的版本号遵循 `主版本.次版本.修订号`。所有版本均为 fork 版本（suiren0219），
 上游 `qingzhou704` 的原始功能记录见 README「致谢与署名」。以下按 新 → 旧 排列。
 
+## 1.18.2（versionCode 32）—— 修复启动闪退
+
+修复 1.18.1 里**每次启动必崩**的缺陷（症状：打开就黑屏、随即退出，且系统之后不再弹崩溃报告）。
+
+**原因**：`classReminderAlarmIntent()` 创建 PendingIntent 时漏了 `FLAG_IMMUTABLE`。Android 12+
+要求必须显式声明可变性，否则抛 `IllegalArgumentException`。这个调用在 `App.onCreate()` →
+`rescheduleUpcomingOnly()` → `rescheduleAll()` → `scheduleClassReminder()` 的必经路径上，
+所以**一启动就崩**；崩溃发生在 `Application.onCreate`，界面还没画出来，因此是「黑屏后闪退」。
+系统对反复崩溃的应用会自动抑制崩溃弹窗，所以后续不再提示。
+
+**修复**：补上 `FLAG_IMMUTABLE`。
+
+**为什么之前的测试没抓到**：Robolectric 的 shadow 不校验这条平台规则，编译期也不报错——这类
+缺陷对单元测试完全不可见。因此新增 `PendingIntentFlagTest`：静态扫描全部源码，检查**每一个**
+`PendingIntent.getActivity/getBroadcast/getService` 调用点是否声明了 `FLAG_IMMUTABLE` 或
+`FLAG_MUTABLE`（会正确跨多行参数）。该测试在修复前确实失败，并精确报出
+`DeadlineNotifier.java:338`。
+
+本次已在真机验证：连续启动 5 次均无崩溃，各页面（首页/课表/我的/设置/统计/月历/备份）
+逐个打开均正常。
+
 ## 1.18.1（versionCode 31）—— 修复闪退
 
 修复 1.18.0 引入的一个**必崩**缺陷：

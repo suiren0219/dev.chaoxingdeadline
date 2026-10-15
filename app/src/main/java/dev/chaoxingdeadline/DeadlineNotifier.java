@@ -332,7 +332,11 @@ public final class DeadlineNotifier {
                 .setAction(DeadlineReceiver.ACTION_CLASS_REMINDER)
                 .setPackage(context.getPackageName());
         BridgeAuth.attach(context, intent);
-        return PendingIntent.getBroadcast(context, CLASS_NOTIFICATION_ID, intent, flags);
+        // FLAG_IMMUTABLE is mandatory here, not decorative: this is called from
+        // App.onCreate via rescheduleAll, and on S+ a PendingIntent without a mutability
+        // flag throws IllegalArgumentException — which took the whole app down on launch.
+        return PendingIntent.getBroadcast(context, CLASS_NOTIFICATION_ID, intent,
+                flags | PendingIntent.FLAG_IMMUTABLE);
     }
 
     private static android.app.PendingIntent classReminderPendingIntent(Context context) {
