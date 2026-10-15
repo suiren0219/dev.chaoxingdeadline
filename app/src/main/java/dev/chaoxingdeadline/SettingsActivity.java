@@ -50,8 +50,12 @@ public final class SettingsActivity extends BaseActivity {
         note.setPadding(dp(16), dp(14), dp(16), dp(14));
         note.addView(text("本 fork 修改说明（suiren0219）", 15, true, UiTheme.text(this)), new LinearLayout.LayoutParams(-1, -2));
         TextView noteBody = text("在原作者功能基础上，本 fork 补上了桌面小组件、课堂活动捕获、免打扰时段、"
-                + "每日摘要、备份导出与手动添加待办；早期实验性的「强制深色模式」已整体移除。"
-                + "—— suiren0219",
+                + "每日摘要、备份导出、整学期课表与手动添加待办；早期实验性的「强制深色模式」已整体移除。"
+                + "\n\n"
+                + "维护状态：本 fork 已停止维护，不再接收新功能与适配。"
+                + "\n\n"
+                + "课表说明：课表数据由学校教务系统同步到学习通，可能存在延迟或临时变更，"
+                + "请以学习通内课表为准。",
                 12, false, UiTheme.muted(this));
         noteBody.setLineSpacing(0f, 1.25f);
         noteBody.setPadding(0, dp(6), 0, 0);

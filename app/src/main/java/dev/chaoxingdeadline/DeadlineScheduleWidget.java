@@ -11,6 +11,7 @@ import android.graphics.Color;
 import android.view.View;
 import android.widget.RemoteViews;
 
+import java.util.ArrayList;
 import java.util.List;
 
 /**
@@ -146,6 +147,9 @@ public final class DeadlineScheduleWidget extends AppWidgetProvider {
             buildTodoFace(context, views, pending);
         }
 
+        // The dot strip only means something on the timetable face.
+        views.setViewVisibility(R.id.s_dots, timetableFace ? View.VISIBLE : View.GONE);
+
         views.setOnClickPendingIntent(R.id.s_switch, switchFacePendingIntent(context, appWidgetId));
         views.setOnClickPendingIntent(R.id.s_refresh,
                 DeadlineWidgetProvider.refreshPendingIntent(context));
@@ -160,6 +164,7 @@ public final class DeadlineScheduleWidget extends AppWidgetProvider {
         if (today.isEmpty()) {
             views.setViewVisibility(R.id.s_flipper, View.GONE);
             views.setViewVisibility(R.id.s_empty, View.VISIBLE);
+            views.setViewVisibility(R.id.s_dots, View.GONE);
             boolean everFetched = new DeadlineStore(context).scheduleUpdatedAt() > 0L;
             views.setTextViewText(R.id.s_empty_text, everFetched
                     ? "今天没有课" : "还没有课表数据\n打开学习通课表页面即可自动获取");
@@ -171,10 +176,23 @@ public final class DeadlineScheduleWidget extends AppWidgetProvider {
         }
         views.setViewVisibility(R.id.s_empty, View.GONE);
         views.setViewVisibility(R.id.s_flipper, View.VISIBLE);
-        for (int i = 0; i < today.size(); i++) {
-            views.addView(R.id.s_flipper, card(context, appWidgetId, today.get(i), current,
-                    today.size(), i, week, firstWeekDate, sectionTimes, now));
+
+        // In-session lesson first (so the widget answers "what now?"), then the rest of the
+        // day in order — the reference app's ordering, and the useful one at a glance.
+        List<Lesson> ordered = new ArrayList<>(today);
+        if (current != null) {
+            for (int i = 0; i < ordered.size(); i++) {
+                if (current.id != null && current.id.equals(ordered.get(i).id)) {
+                    ordered.add(0, ordered.remove(i));
+                    break;
+                }
+            }
         }
+        for (int i = 0; i < ordered.size(); i++) {
+            views.addView(R.id.s_flipper, card(context, appWidgetId, ordered.get(i), current,
+                    ordered.size(), i, week, firstWeekDate, sectionTimes, now));
+        }
+        fillDots(context, views, ordered, current, now, firstWeekDate, week, sectionTimes);
         // Clamped: a lesson removed since the last tap must not point past the end.
         int page = prefs.getInt(KEY_PAGE + appWidgetId, 0) % today.size();
         views.setInt(R.id.s_flipper, "setDisplayedChild", page);
@@ -242,6 +260,56 @@ public final class DeadlineScheduleWidget extends AppWidgetProvider {
                 ? lessonPagePendingIntent(context, appWidgetId)
                 : DeadlineWidgetProvider.mainPendingIntent(context));
         return card;
+    }
+
+    /**
+     * Colours the section-dot strip: one dot per lesson of the day, in course colours,
+     * with the one in session bright and the finished ones dimmed. The trailing text
+     * counts what is still ahead, so the widget answers "how much of my day is left?"
+     * without opening anything — the pattern the reference app uses.
+     */
+    private static void fillDots(Context context, RemoteViews views, List<Lesson> ordered,
+                                 Lesson current, long now, long firstWeekDate, int week,
+                                 String sectionTimes) {
+        int[] dots = {R.id.s_dot1, R.id.s_dot2, R.id.s_dot3, R.id.s_dot4,
+                R.id.s_dot5, R.id.s_dot6, R.id.s_dot7, R.id.s_dot8};
+        int finished = 0;
+        int remaining = 0;
+        for (int i = 0; i < dots.length; i++) {
+            if (i >= ordered.size()) {
+                views.setViewVisibility(dots[i], View.GONE);
+                continue;
+            }
+            Lesson lesson = ordered.get(i);
+            boolean isCurrent = current != null && current.id != null
+                    && current.id.equals(lesson.id);
+            long end = ScheduleMath.lessonEndAt(firstWeekDate, week, lesson.dayOfWeek,
+                    lesson.beginSection, lesson.sections, sectionTimes);
+            boolean isPast = end > 0L && now >= end;
+            if (isPast) {
+                finished++;
+            } else if (!isCurrent) {
+                remaining++;
+            }
+            int[] colors = UiTheme.courseColors(context, lesson.name);
+            views.setViewVisibility(dots[i], View.VISIBLE);
+            views.setInt(dots[i], "setBackgroundColor",
+                    isPast ? DeadlineWidgetProvider.mutedText(context, true) : colors[1]);
+            views.setFloat(dots[i], "setAlpha", isCurrent ? 1f : (isPast ? 0.45f : 0.8f));
+        }
+        // While a class is in session the wording points at the current one.
+        String label;
+        if (current != null) {
+            label = remaining > 0 ? "本节之后还有 " + remaining + " 节" : "今天是最后一节";
+        } else if (remaining > 0) {
+            label = "还有 " + remaining + " 节课";
+        } else if (finished > 0) {
+            label = "今天的课已上完";
+        } else {
+            label = "";
+        }
+        views.setTextViewText(R.id.s_remaining, label);
+        views.setTextColor(R.id.s_remaining, DeadlineWidgetProvider.mutedText(context, true));
     }
 
     private static PendingIntent switchFacePendingIntent(Context context, int appWidgetId) {

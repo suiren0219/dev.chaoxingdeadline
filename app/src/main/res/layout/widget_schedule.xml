@@ -85,6 +85,84 @@
             android:textStyle="bold" />
     </LinearLayout>
 
+
+    <!-- 当天课程圆点：每节课一个色点，一眼看出今天有几节、现在在第几节（学 Nexio） -->
+    <LinearLayout
+        android:id="@+id/s_dots"
+        android:layout_width="match_parent"
+        android:layout_height="wrap_content"
+        android:layout_marginTop="10dp"
+        android:gravity="center_vertical"
+        android:orientation="horizontal">
+
+        <TextView
+            android:id="@+id/s_dot1"
+            android:layout_width="8dp"
+            android:layout_height="8dp"
+            android:layout_marginEnd="5dp"
+            android:background="#7C9CFF" />
+
+        <TextView
+            android:id="@+id/s_dot2"
+            android:layout_width="8dp"
+            android:layout_height="8dp"
+            android:layout_marginEnd="5dp"
+            android:background="#7C9CFF" />
+
+        <TextView
+            android:id="@+id/s_dot3"
+            android:layout_width="8dp"
+            android:layout_height="8dp"
+            android:layout_marginEnd="5dp"
+            android:background="#7C9CFF" />
+
+        <TextView
+            android:id="@+id/s_dot4"
+            android:layout_width="8dp"
+            android:layout_height="8dp"
+            android:layout_marginEnd="5dp"
+            android:background="#7C9CFF" />
+
+        <TextView
+            android:id="@+id/s_dot5"
+            android:layout_width="8dp"
+            android:layout_height="8dp"
+            android:layout_marginEnd="5dp"
+            android:background="#7C9CFF" />
+
+        <TextView
+            android:id="@+id/s_dot6"
+            android:layout_width="8dp"
+            android:layout_height="8dp"
+            android:layout_marginEnd="5dp"
+            android:background="#7C9CFF" />
+
+        <TextView
+            android:id="@+id/s_dot7"
+            android:layout_width="8dp"
+            android:layout_height="8dp"
+            android:layout_marginEnd="5dp"
+            android:background="#7C9CFF" />
+
+        <TextView
+            android:id="@+id/s_dot8"
+            android:layout_width="8dp"
+            android:layout_height="8dp"
+            android:background="#7C9CFF" />
+
+        <TextView
+            android:id="@+id/s_remaining"
+            android:layout_width="0dp"
+            android:layout_height="wrap_content"
+            android:layout_marginStart="10dp"
+            android:layout_weight="1"
+            android:ellipsize="end"
+            android:maxLines="1"
+            android:text="还有 2 节课"
+            android:textColor="#99FFFFFF"
+            android:textSize="11sp" />
+    </LinearLayout>
+
     <!-- 双面容器 -->
     <ViewFlipper
         android:id="@+id/s_flipper"

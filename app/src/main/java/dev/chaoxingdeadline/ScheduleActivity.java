@@ -159,8 +159,11 @@ public final class ScheduleActivity extends BaseActivity {
 
         long updatedAt = store.scheduleUpdatedAt();
         if (updatedAt > 0L) {
+            // The caveat belongs next to the data it describes: timetables sync from the
+            // school's system, so they can lag behind a room change or a cancellation.
             TextView stamp = text("更新于 " + DateText.deadlineTime(updatedAt)
-                    + " · 数据来自学习通课表页面", 11, false, UiTheme.muted(this));
+                    + " · 来自学校教务系统同步，可能有延迟，请以学习通内课表为准",
+                    11, false, UiTheme.muted(this));
             stamp.setPadding(dp(4), dp(2), dp(4), dp(8));
             content.addView(stamp, new LinearLayout.LayoutParams(-1, -2));
         }

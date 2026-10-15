@@ -528,6 +528,11 @@ public final class MainActivity extends BaseActivity implements App.ServiceListe
         View open = GlassUi.actionRow(this, "打开完整课表页", "今日 / 周 / 设置 三个板块");
         open.setOnClickListener(v -> startActivity(new Intent(this, ScheduleActivity.class)));
         panel.addView(open, new LinearLayout.LayoutParams(-1, -2));
+
+        TextView caveat = GlassUi.body(this,
+                "课表由学校教务系统同步，可能有延迟或临时调整，请以学习通内课表为准", 11);
+        caveat.setPadding(dp(4), dp(8), dp(4), dp(4));
+        panel.addView(caveat, new LinearLayout.LayoutParams(-1, -2));
         return panel;
     }
 

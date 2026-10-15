@@ -78,8 +78,14 @@ public final class AboutActivity extends BaseActivity {
         thirdParty.setOnClickListener(v -> startActivity(new Intent(Intent.ACTION_VIEW, Uri.parse(NOTICE_URL))));
         content.addView(thirdParty, groupParams());
 
+        View accuracy = actionRow("课表准确性", "课表数据来自学校教务系统同步，可能有延迟或变更，请以学习通内课表为准。");
+        content.addView(accuracy, groupParams());
+
         View disclaimer = actionRow("免责声明", "本工具仅用于个人待办提醒；项目不隶属于超星、学习通或学校平台，请遵守相关使用规则。");
         content.addView(disclaimer, groupParams());
+
+        View maintenance = actionRow("维护状态", "本 fork 已停止维护，不再接收新功能与适配；代码与文档保持现状。");
+        content.addView(maintenance, groupParams());
 
         return root;
     }

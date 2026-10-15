@@ -118,6 +118,43 @@
             android:textSize="12sp" />
     </LinearLayout>
 
+
+    <!-- 节次圆点示意：一节课一个色点 + 剩余课程数 -->
+    <LinearLayout
+        android:layout_width="match_parent"
+        android:layout_height="wrap_content"
+        android:layout_marginTop="10dp"
+        android:gravity="center_vertical"
+        android:orientation="horizontal">
+
+        <TextView
+            android:layout_width="8dp"
+            android:layout_height="8dp"
+            android:layout_marginEnd="5dp"
+            android:background="#99FFFFFF" />
+
+        <TextView
+            android:layout_width="8dp"
+            android:layout_height="8dp"
+            android:layout_marginEnd="5dp"
+            android:background="#99FFFFFF" />
+
+        <TextView
+            android:layout_width="8dp"
+            android:layout_height="8dp"
+            android:layout_marginEnd="5dp"
+            android:background="#7C9CFF" />
+
+        <TextView
+            android:layout_width="0dp"
+            android:layout_height="wrap_content"
+            android:layout_marginStart="10dp"
+            android:layout_weight="1"
+            android:text="本节之后还有 1 节"
+            android:textColor="#99FFFFFF"
+            android:textSize="11sp" />
+    </LinearLayout>
+
     <!-- 待办行示意 -->
     <LinearLayout
         android:layout_width="match_parent"
